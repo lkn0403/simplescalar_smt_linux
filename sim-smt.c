@@ -1892,7 +1892,7 @@ static struct RS_link RSLINK_NULL = RSLINK_NULL_DATA;
 #define RSLINK_IS_NULL(LINK)            ((LINK)->rq == NULL)
 
 /* non-zero if RS link is to a valid (non-squashed) entry */
-#define RSLINK_VALID(LINK)              ((LINK)->tag == (LINK)->rq->node->tag)
+#define RSLINK_VALID(LINK)              ((LINK)->rq && (LINK)->tag == (LINK)->rq->node->tag)
 
 /* extra RUU reservation station pointer */
 #define RSLINK_RS(LINK)                 ((LINK)->rq)
@@ -2304,22 +2304,28 @@ ruu_commit(void)
   int commit_stop[MAX_THREAD];
   for (int i = 0; i < thread_num; i++) commit_stop[i] = 0;
 
-  int tid = last_commited;
-  struct RUU_queue *ruu_commit = RUU;
-  struct RUU_queue *lsq_commit = LSQ;
+  struct RUU_queue *ruu_head, *ruu_temp = RUU;
+  struct RUU_queue *lsq_head, *lsq_temp = LSQ;
+  struct RUU_station *RUU_ptr;
+  struct RUU_station *LSQ_ptr;
   /* all values must be retired to the architected reg file in program order */
   while (RUU_num > 0 && committed < ruu_commit_width) {
+    ruu_head = ruu_temp;
+    lsq_head = lsq_temp;
     if (n_commit_stop == thread_num) break;
+    if (!ruu_head) break;
+    RUU_ptr = ruu_head->node;
+    int tid = RUU_ptr->tid;
     if (commit_stop[tid]) {
-      ruu_commit = ruu_commit -> next;
+      ruu_temp = ruu_head -> next;
       continue;
     }
-    struct RUU_station *RUU_ptr = ruu_commit->node;
-    struct RUU_station *LSQ_ptr = lsq_commit->node;
 
     if (!RUU_ptr->completed) {
       /* at least RUU entry must be complete */
-      ruu_commit = ruu_commit -> next;
+      ruu_temp = ruu_head -> next;
+      if (RUU_ptr->ea_comp)
+        lsq_temp = lsq_temp -> next;
       commit_stop[tid] = 1;
       n_commit_stop++;
       continue;
@@ -2330,6 +2336,7 @@ ruu_commit(void)
 
     /* load/stores must retire load/store queue entry as well */
     if (RUU_ptr->ea_comp) {
+      LSQ_ptr = lsq_head->node;
       /* load/store, retire head of LSQ as well */
       if (LSQ_num <= 0 || !LSQ_ptr->in_LSQ)
         panic("RUU out of sync with LSQ");
@@ -2337,6 +2344,8 @@ ruu_commit(void)
       /* load/store operation must be complete */
       if (!LSQ_ptr->completed) {
 	      /* load/store operation is not yet complete */
+        ruu_temp = ruu_head -> next;
+        lsq_temp = lsq_temp -> next;
         commit_stop[tid] = 1;
         continue;
 	    }
@@ -2392,7 +2401,9 @@ ruu_commit(void)
       ptrace_endinst(LSQ_ptr->ptrace_seq);
 
       /* commit head of LSQ as well */
-      LSQ_pop_head();
+      lsq_temp = lsq_head -> next;
+      LSQ_pop_head(lsq_head);
+      // LSQ_ptr->tag++;
     }
 
     if (pred
@@ -2431,7 +2442,9 @@ ruu_commit(void)
         panic ("retired instruction has odeps\n");
     }
       /* commit head entry of RUU */
-    RUU_pop_head();
+    ruu_temp = ruu_head -> next;
+    RUU_delete(ruu_head);
+    // RUU_ptr->tag++;
 
     /* one more instruction committed to architected state */
     committed++;
@@ -2449,7 +2462,8 @@ ruu_commit(void)
 static void
 ruu_recover(int tid, struct RUU_queue *mispred)			/* index of mis-pred branch */
 {
-  struct RUU_queue *RUU_index, *LSQ_index;
+  struct RUU_queue *RUU_index, *LSQ_index, *RUU_temp, *LSQ_temp;
+  struct RS_link *eq_node, *req_node;
 
   /* recover from the tail of the RUU towards the head until the branch index
      is reached, this direction ensures that the LSQ can be synchronized with
@@ -2468,6 +2482,13 @@ ruu_recover(int tid, struct RUU_queue *mispred)			/* index of mis-pred branch */
     // /* should meet up with the tail first */
     // if (RUU_index == RUU_head[tid])
     //   panic("RUU head and tail broken");
+
+    if (RUU_index->node->tid != tid) {
+      if (RUU_index->node->ea_comp)
+        LSQ_index = LSQ_index->prev;
+      RUU_index = RUU_index->prev;
+      continue;
+    }
 
     /* is this operation an effective addr calc for a load or store? */
     if (RUU_index->node->ea_comp) {
@@ -2488,9 +2509,73 @@ ruu_recover(int tid, struct RUU_queue *mispred)			/* index of mis-pred branch */
     
       /* indicate in pipetrace that this instruction was squashed */
       ptrace_endinst(LSQ_index->node->ptrace_seq);
+      LSQ_temp = LSQ_index->prev;
+      eq_node = event_queue; req_node = ready_queue;
 
+      // while (eq_node) {
+      //   if (eq_node->rq == LSQ_index)
+      //     eq_node->rq = NULL;
+      //   eq_node = eq_node->next;
+      // }
+      // while (req_node) {
+      //   if (req_node->rq == LSQ_index)
+      //     req_node->rq = NULL;
+      //   req_node = req_node->next;
+      // }
+
+
+            struct RS_link *req_link_iter_lsq = ready_queue;
+      struct RS_link *prev_req_link_lsq = NULL;
+
+      while (req_link_iter_lsq) {
+          if (req_link_iter_lsq->rq == LSQ_index) { // LSQ_index와 비교
+              // 핵심 변경: 다음 노드를 RSLINK_FREE 호출 이전에 저장
+              struct RS_link *temp_next = req_link_iter_lsq->next; 
+
+              RSLINK_FREE(req_link_iter_lsq); // rq=NULL, tag=0, next 오염 발생
+
+              // 연결 리스트에서 노드 제거
+              if (prev_req_link_lsq) {
+                  prev_req_link_lsq->next = temp_next; // 미리 저장해 둔 temp_next 사용
+              } else {
+                  ready_queue = temp_next; // 헤드 업데이트
+              }
+              
+              req_link_iter_lsq = temp_next; // 다음 순회 노드로 이동
+              continue; // 현재 노드를 제거했으므로 prev 업데이트 없이 다음 순회
+          }
+          prev_req_link_lsq = req_link_iter_lsq;
+          req_link_iter_lsq = req_link_iter_lsq->next;
+      }
+
+      // 2. event_queue cleanup for LSQ entry
+      struct RS_link *eq_link_iter_lsq = event_queue;
+      struct RS_link *prev_eq_link_lsq = NULL;
+
+      while (eq_link_iter_lsq) {
+          if (eq_link_iter_lsq->rq == LSQ_index) { // LSQ_index와 비교
+              // 핵심 변경: 다음 노드를 RSLINK_FREE 호출 이전에 저장
+              struct RS_link *temp_next = eq_link_iter_lsq->next; 
+
+              RSLINK_FREE(eq_link_iter_lsq); // rq=NULL, tag=0, next 오염 발생
+
+              // 연결 리스트에서 노드 제거
+              if (prev_eq_link_lsq) {
+                  prev_eq_link_lsq->next = temp_next; // 미리 저장해 둔 temp_next 사용
+              } else {
+                  event_queue = temp_next; // 헤드 업데이트
+              }
+              
+              eq_link_iter_lsq = temp_next; // 다음 순회 노드로 이동
+              continue; // 현재 노드를 제거했으므로 prev 업데이트 없이 다음 순회
+          }
+          prev_eq_link_lsq = eq_link_iter_lsq;
+          eq_link_iter_lsq = eq_link_iter_lsq->next;
+      }
       /* go to next earlier LSQ slot */
+      LSQ_index->node->tag++;
       LSQ_delete(LSQ_index);
+      LSQ_index = LSQ_temp;
     }
 
       /* recover any resources used by this RUU operation */
@@ -2507,7 +2592,71 @@ ruu_recover(int tid, struct RUU_queue *mispred)			/* index of mis-pred branch */
     ptrace_endinst(RUU_index->node->ptrace_seq);
 
     /* go to next earlier slot in the RUU */
+    RUU_temp = RUU_index->prev;
+    // RUU_delete(RUU_index);
+    // eq_node = event_queue; req_node = ready_queue;
+    //   while (eq_node) {
+    //     if (eq_node->rq == RUU_index)
+    //       eq_node->rq = NULL;
+    //     eq_node = eq_node->next;
+    //   }
+    //   while (req_node) {
+    //     if (req_node->rq == RUU_index)
+    //       req_node->rq = NULL;
+    //     req_node = req_node->next;
+    //   }
+    struct RS_link *req_link_iter_ruu = ready_queue;
+    struct RS_link *prev_req_link_ruu = NULL;
+
+    while (req_link_iter_ruu) {
+        if (req_link_iter_ruu->rq == RUU_index) { // RUU_index와 비교
+            // 핵심 변경: 다음 노드를 RSLINK_FREE 호출 이전에 저장
+            struct RS_link *temp_next = req_link_iter_ruu->next; 
+
+            RSLINK_FREE(req_link_iter_ruu); // rq=NULL, tag=0, next 오염 발생
+
+            // 연결 리스트에서 노드 제거
+            if (prev_req_link_ruu) {
+                prev_req_link_ruu->next = temp_next; // 미리 저장해 둔 temp_next 사용
+            } else {
+                ready_queue = temp_next; // 헤드 업데이트
+            }
+            
+            req_link_iter_ruu = temp_next; // 다음 순회 노드로 이동
+            continue; // 현재 노드를 제거했으므로 prev 업데이트 없이 다음 순회
+        }
+        prev_req_link_ruu = req_link_iter_ruu;
+        req_link_iter_ruu = req_link_iter_ruu->next;
+    }
+
+    // 2. event_queue cleanup for RUU entry
+    struct RS_link *eq_link_iter_ruu = event_queue;
+    struct RS_link *prev_eq_link_ruu = NULL;
+
+    while (eq_link_iter_ruu) {
+        if (eq_link_iter_ruu->rq == RUU_index) { // RUU_index와 비교
+            // 핵심 변경: 다음 노드를 RSLINK_FREE 호출 이전에 저장
+            struct RS_link *temp_next = eq_link_iter_ruu->next; 
+
+            RSLINK_FREE(eq_link_iter_ruu); // rq=NULL, tag=0, next 오염 발생
+
+            // 연결 리스트에서 노드 제거
+            if (prev_eq_link_ruu) {
+                prev_eq_link_ruu->next = temp_next; // 미리 저장해 둔 temp_next 사용
+            } else {
+                event_queue = temp_next; // 헤드 업데이트
+            }
+            
+            eq_link_iter_ruu = temp_next; // 다음 순회 노드로 이동
+            continue; // 현재 노드를 제거했으므로 prev 업데이트 없이 다음 순회
+        }
+        prev_eq_link_ruu = eq_link_iter_ruu;
+        eq_link_iter_ruu = eq_link_iter_ruu->next;
+    }
+
+    RUU_index->node->tag++;
     RUU_delete(RUU_index);
+    RUU_index = RUU_temp;
   }
 
   /* revert create vector back to last precise create vector state, NOTE:
@@ -2760,6 +2909,7 @@ lsq_refresh(void)
 	      readyq_enqueue(LSQ_qptr);
 	    }
 	}
+        LSQ_qptr = LSQ_qptr->next;
     }
   
 }
@@ -4003,16 +4153,16 @@ ruu_dispatch(void)
         break;
       }
 
-      struct fetch_rec fetch_data_ptr = fetch_data->node;
+      struct fetch_rec *fetch_data_ptr = &fetch_data->node;
 
       /* get the next instruction from the IFETCH -> DISPATCH queue */
-      inst = fetch_data_ptr.IR;
-      tid = fetch_data_ptr.tid;
-      regs[tid].regs_PC = fetch_data_ptr.regs_PC;
-      pred_PC[tid] = fetch_data_ptr.pred_PC;
-      dir_update_ptr = &(fetch_data_ptr.dir_update);
-      stack_recover_idx = fetch_data_ptr.stack_recover_idx;
-      pseq = fetch_data_ptr.ptrace_seq;
+      inst = fetch_data_ptr->IR;
+      tid = fetch_data_ptr->tid;
+      regs[tid].regs_PC = fetch_data_ptr->regs_PC;
+      pred_PC[tid] = fetch_data_ptr->pred_PC;
+      dir_update_ptr = &(fetch_data_ptr->dir_update);
+      stack_recover_idx = fetch_data_ptr->stack_recover_idx;
+      pseq = fetch_data_ptr->ptrace_seq;
 
       if (!ruu_include_spec && spec_mode[tid]) break;
 
@@ -4418,10 +4568,7 @@ fetch_init(void)
 {
   /* allocate the IFETCH -> DISPATCH instruction queue */
 
-  fetch_data =
-    (struct fetch_queue *)calloc(1, sizeof(struct fetch_queue));
-    if (!fetch_data)
-      fatal("out of virtual memory");
+  fetch_data = NULL;
 
   fetch_num = 0;
 
@@ -4563,7 +4710,7 @@ ruu_fetch(void)
       /* have a valid inst, here */
 
     struct fetch_queue *new_node = calloc(1, sizeof(struct fetch_queue));
-	  struct fetch_rec fetch_data_ptr = new_node->node;
+	  struct fetch_rec *fetch_data_ptr = &new_node->node;
       /* possibly use the BTB target */
       if (pred)
 	{
@@ -4582,7 +4729,7 @@ ruu_fetch(void)
 			   /* opcode */op,
 			   /* call? */MD_IS_CALL(op),
 			   /* return? */MD_IS_RETURN(op),
-			   /* updt */&(fetch_data_ptr.dir_update),
+			   /* updt */&(fetch_data_ptr->dir_update),
 			   /* RSB index */&stack_recover_idx);
 	  else
 	    fetch_pred_PC[fetch_thread] = 0;
@@ -4609,12 +4756,12 @@ ruu_fetch(void)
 	}
 
       /* commit this instruction to the IFETCH -> DISPATCH queue */
-      fetch_data_ptr.IR = inst;
-      fetch_data_ptr.tid = fetch_thread;
-      fetch_data_ptr.regs_PC = fetch_regs_PC[fetch_thread];
-      fetch_data_ptr.pred_PC = fetch_pred_PC[fetch_thread];
-      fetch_data_ptr.stack_recover_idx = stack_recover_idx;
-      fetch_data_ptr.ptrace_seq = ptrace_seq++;
+      fetch_data_ptr->IR = inst;
+      fetch_data_ptr->tid = fetch_thread;
+      fetch_data_ptr->regs_PC = fetch_regs_PC[fetch_thread];
+      fetch_data_ptr->pred_PC = fetch_pred_PC[fetch_thread];
+      fetch_data_ptr->stack_recover_idx = stack_recover_idx;
+      fetch_data_ptr->ptrace_seq = ptrace_seq++;
 
       /* for pipe trace */
       // ptrace_newinst(fetch_data_ptr[ruu_fetch_tail].ptrace_seq,
