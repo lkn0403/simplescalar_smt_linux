@@ -1,1 +1,1 @@
-target-alpha/config.h
+target-alpha-linux/config.h

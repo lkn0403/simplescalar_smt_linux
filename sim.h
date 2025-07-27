@@ -61,6 +61,8 @@
 #include "regs.h"
 #include "memory.h"
 
+#define MAX_THREAD 4
+
 /* set to non-zero when simulator should dump statistics */
 extern int sim_dump_stats;
 
@@ -76,6 +78,7 @@ extern int sim_swap_words;
 
 /* execution instruction counter */
 extern counter_t sim_num_insn;
+extern counter_t sim_thread_insn[MAX_THREAD];
 
 /* execution start/end times */
 extern time_t sim_start_time;
@@ -94,7 +97,7 @@ extern char *sim_chkpt_fname;
 extern FILE *sim_eio_fd;
 
 /* redirected program/simulator output file names */
-extern FILE *sim_progfd;
+extern FILE *sim_progfd[MAX_THREAD];
 
 
 /*
@@ -107,16 +110,16 @@ void sim_reg_options(struct opt_odb_t *odb);
 /* main() parses options next... */
 
 /* check simulator-specific option values */
-void sim_check_options(struct opt_odb_t *odb, int argc, char **argv);
+void sim_check_options(struct opt_odb_t *odb, int argc, char **argv, int thread_num);
 
 /* register simulator-specific statistics */
-void sim_reg_stats(struct stat_sdb_t *sdb);
+void sim_reg_stats(int tid, struct stat_sdb_t *sdb);
 
 /* initialize the simulator */
-void sim_init(void);
+void sim_init_smt(int num);
 
 /* load program into simulated state */
-void sim_load_prog(char *fname, int argc, char **argv, char **envp);
+void sim_load_prog_smt(int tid, char *fname, int argc, char **argv, char **envp);
 
 /* main() prints the option database values next... */
 

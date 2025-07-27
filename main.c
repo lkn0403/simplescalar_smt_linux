@@ -91,6 +91,8 @@ signal_exit_now(int sigtype)
 
 /* execution instruction counter */
 counter_t sim_num_insn = 0;
+counter_t sim_thread_insn[MAX_THREAD];
+char redirprog[MAX_THREAD][20];
 
 #if 0 /* not portable... :-( */
 /* total simulator (data) memory usage */
@@ -127,12 +129,15 @@ char *sim_chkpt_fname = NULL;
 FILE *sim_eio_fd = NULL;
 
 /* redirected program/simulator output file names */
-static char *sim_simout = NULL;
-static char *sim_progout = NULL;
-FILE *sim_progfd = NULL;
+static char *sim_simout;
+static char *sim_progout[MAX_THREAD];
+FILE *sim_progfd[MAX_THREAD];
 
 /* track first argument orphan, this is the program to execute */
 static int exec_index = -1;
+static int thread_num = 0;
+static int exec_start[MAX_THREAD];
+static int exec_end[MAX_THREAD];
 
 /* dump help information */
 static int help_me;
@@ -270,13 +275,17 @@ main(int argc, char **argv, char **envp)
 		 &sim_chkpt_fname, /* default */NULL, /* !print */FALSE, NULL);
 
   /* stdio redirection options */
-  opt_reg_string(sim_odb, "-redir:sim",
-		 "redirect simulator output to file (non-interactive only)",
-		 &sim_simout,
-		 /* default */NULL, /* !print */FALSE, NULL);
-  opt_reg_string(sim_odb, "-redir:prog",
-		 "redirect simulated program output to file",
-		 &sim_progout, /* default */NULL, /* !print */FALSE, NULL);
+  opt_reg_string(sim_odb, "-redir:prog%d",
+    "redirect simulator output to file (non-interactive only)",
+    &sim_simout, /* default */NULL, /* !print */FALSE, NULL);
+  for (int tid = 0; tid < MAX_THREAD; tid++) {
+    sprintf(redirprog[tid], "-redir:prog%d", tid);
+    opt_reg_string(sim_odb, redirprog[tid],
+      "redirect simulated program output to file",
+      &sim_progout[tid], /* default */NULL, /* !print */FALSE, NULL);
+  }
+
+
 
 #ifndef _MSC_VER
   /* scheduling priority option */
@@ -293,6 +302,19 @@ main(int argc, char **argv, char **envp)
   /* parse simulator options */
   exec_index = -1;
   opt_process_options(sim_odb, argc, argv);
+  if (exec_index != -1) {
+    thread_num = 1;
+  } else {
+    for (int index = 1; index < argc; index++) {
+      if (!strcmp(argv[index], "--")) {
+        exec_start[thread_num] = ++index;
+        while (index < argc && strcmp(argv[index], "--"))
+          index++;
+        exec_end[thread_num] = index--;
+        thread_num++;
+      }
+    }
+  }
 
   /* redirect I/O? */
   if (sim_simout != NULL)
@@ -303,13 +325,13 @@ main(int argc, char **argv, char **envp)
 	fatal("unable to redirect simulator output to file `%s'", sim_simout);
     }
 
-  if (sim_progout != NULL)
-    {
-      /* redirect simulated program output to file SIM_PROGOUT */
-      sim_progfd = fopen(sim_progout, "w");
-      if (!sim_progfd)
-	fatal("unable to redirect program output to file `%s'", sim_progout);
-    }
+  // if (sim_progout != NULL)
+  //   {
+  //     /* redirect simulated program output to file SIM_PROGOUT */
+  //     sim_progfd = fopen(sim_progout, "w");
+  //     if (!sim_progfd)
+	// fatal("unable to redirect program output to file `%s'", sim_progout);
+  //   }
 
   /* need at least two argv values to run */
   if (argc < 2)
@@ -342,7 +364,7 @@ main(int argc, char **argv, char **envp)
     }
 
   /* exec_index is set in orphan_fn() */
-  if (exec_index == -1)
+  if (exec_index == -1 && thread_num == 0)
     {
       /* executable was not found */
       fprintf(stderr, "error: no executable specified\n");
@@ -352,7 +374,7 @@ main(int argc, char **argv, char **envp)
   /* else, exec_index points to simulated program arguments */
 
   /* check simulator-specific options */
-  sim_check_options(sim_odb, argc, argv);
+  sim_check_options(sim_odb, argc, argv, thread_num);
 
 #ifndef _MSC_VER
   /* set simulator scheduling priority */
@@ -375,14 +397,28 @@ main(int argc, char **argv, char **envp)
   md_init_decoder();
 
   /* initialize all simulation modules */
-  sim_init();
+  sim_init_smt(thread_num);
+  
+  for (int tid = 0; tid < thread_num; tid++)
+  if (sim_progout[tid] != NULL)
+    {
+      /* redirect simulated program output to file SIM_PROGOUT */
+      sim_progfd[tid] = fopen(sim_progout[tid], "w");
+      if (!sim_progfd[tid])
+	fatal("unable to redirect program output to file `%s'", sim_progout[tid]);
+    }
 
   /* initialize architected state */
-  sim_load_prog(argv[exec_index], argc-exec_index, argv+exec_index, envp);
+  for (int index = 0; index < thread_num; index++) {
+    fprintf(stderr, "load program: %s\n", argv[exec_start[index]]);
+    
+    sim_load_prog_smt(index, argv[exec_start[index]], exec_end[index] - exec_start[index],
+        argv + exec_start[index], envp);
+  }
 
   /* register all simulator stats */
   sim_sdb = stat_new();
-  sim_reg_stats(sim_sdb);
+  sim_reg_stats(thread_num, sim_sdb);
 #if 0 /* not portable... :-( */
   stat_reg_uint(sim_sdb, "sim_mem_usage",
 		"total simulator (data) memory usage",

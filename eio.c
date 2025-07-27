@@ -91,7 +91,7 @@
 */
 
 /* EIO transaction count, i.e., number of last transaction completed */
-static counter_t eio_trans_icnt = -1;
+static counter_t eio_trans_icnt[MAX_THREAD];
 
 FILE *
 eio_create(char *fname)
@@ -206,7 +206,7 @@ eio_close(FILE *fd)
 /* check point current architected state to stream FD, returns
    EIO transaction count (an EIO file pointer) */
 counter_t
-eio_write_chkpt(struct regs_t *regs,		/* regs to dump */
+eio_write_chkpt(int tid, struct regs_t *regs,		/* regs to dump */
 		struct mem_t *mem,		/* memory to dump */
 		FILE *fd)			/* stream to write to */
 {
@@ -297,15 +297,15 @@ eio_write_chkpt(struct regs_t *regs,		/* regs to dump */
       exo_delete(exo);
     }
 
-  myfprintf(fd, "/* ** end checkpoint @ %n... */\n\n", eio_trans_icnt);
+  myfprintf(fd, "/* ** end checkpoint @ %n... */\n\n", eio_trans_icnt[tid]);
 
-  return eio_trans_icnt;
+  return eio_trans_icnt[tid];
 }
 
 /* read check point of architected state from stream FD, returns
    EIO transaction count (an EIO file pointer) */
 counter_t
-eio_read_chkpt(struct regs_t *regs,		/* regs to dump */
+eio_read_chkpt(int tid, struct regs_t *regs,		/* regs to dump */
 		struct mem_t *mem,		/* memory to dump */
 		FILE *fd)			/* stream to read */
 {
@@ -381,8 +381,8 @@ eio_read_chkpt(struct regs_t *regs,		/* regs to dump */
       || exo->as_list.head->next->next->next != NULL)
     fatal("could not read EIO memory page count");
   page_count = exo->as_list.head->as_integer.val;
-  ld_brk_point = (md_addr_t)exo->as_list.head->next->as_address.val;
-  ld_stack_min = (md_addr_t)exo->as_list.head->next->next->as_address.val;
+  ld_brk_point[tid] = (md_addr_t)exo->as_list.head->next->as_address.val;
+  ld_stack_min[tid] = (md_addr_t)exo->as_list.head->next->next->as_address.val;
   exo_delete(exo);
 
   /* read text segment specifiers */
@@ -395,8 +395,8 @@ eio_read_chkpt(struct regs_t *regs,		/* regs to dump */
       || exo->as_list.head->next->ec != ec_integer
       || exo->as_list.head->next->next != NULL)
     fatal("count not read EIO text segment specifiers");
-  ld_text_base = (md_addr_t)exo->as_list.head->as_address.val;
-  ld_text_size = (unsigned int)exo->as_list.head->next->as_integer.val;
+  ld_text_base[tid] = (md_addr_t)exo->as_list.head->as_address.val;
+  ld_text_size[tid] = (unsigned int)exo->as_list.head->next->as_integer.val;
   exo_delete(exo);
 
   /* read data segment specifiers */
@@ -409,8 +409,8 @@ eio_read_chkpt(struct regs_t *regs,		/* regs to dump */
       || exo->as_list.head->next->ec != ec_integer
       || exo->as_list.head->next->next != NULL)
     fatal("count not read EIO data segment specifiers");
-  ld_data_base = (md_addr_t)exo->as_list.head->as_address.val;
-  ld_data_size = (unsigned int)exo->as_list.head->next->as_integer.val;
+  ld_data_base[tid] = (md_addr_t)exo->as_list.head->as_address.val;
+  ld_data_size[tid] = (unsigned int)exo->as_list.head->next->as_integer.val;
   exo_delete(exo);
 
   /* read stack segment specifiers */
@@ -423,8 +423,8 @@ eio_read_chkpt(struct regs_t *regs,		/* regs to dump */
       || exo->as_list.head->next->ec != ec_integer
       || exo->as_list.head->next->next != NULL)
     fatal("count not read EIO stack segment specifiers");
-  ld_stack_base = (md_addr_t)exo->as_list.head->as_address.val;
-  ld_stack_size = (unsigned int)exo->as_list.head->next->as_integer.val;
+  ld_stack_base[tid] = (md_addr_t)exo->as_list.head->as_address.val;
+  ld_stack_size[tid] = (unsigned int)exo->as_list.head->next->as_integer.val;
   exo_delete(exo);
 
   for (i=0; i < page_count; i++)
@@ -568,7 +568,7 @@ my_mem_fn(struct mem_t *mem,		/* memory space to access */
    and memory are assumed to be precise when this function is called,
    register and memory are updated with the results of the sustem call */
 void
-eio_write_trace(FILE *eio_fd,			/* EIO stream file desc */
+eio_write_trace(int tid, FILE *eio_fd,			/* EIO stream file desc */
 		counter_t icnt,			/* instruction count */
 		struct regs_t *regs,		/* registers to update */
 		mem_access_fn mem_fn,		/* generic memory accessor */
@@ -595,10 +595,10 @@ eio_write_trace(FILE *eio_fd,			/* EIO stream file desc */
   local_mem_fn = mem_fn;
 
   if (sim_eio_fd != NULL)
-    eio_read_trace(sim_eio_fd, icnt, regs, my_mem_fn, mem, inst);
+    eio_read_trace(tid, sim_eio_fd, icnt, regs, my_mem_fn, mem, inst);
   else
     {
-      sys_syscall(regs, my_mem_fn, mem, inst, FALSE);
+      sys_syscall(tid, regs, my_mem_fn, mem, inst, FALSE);
     }
 
   /* write syscall breakpoint and register outputs ($r2..$r7) */
@@ -626,14 +626,15 @@ eio_write_trace(FILE *eio_fd,			/* EIO stream file desc */
   exo_delete(exo);
 
   /* one more transaction processed */
-  eio_trans_icnt = icnt;
+  eio_trans_icnt[tid] = icnt;
 }
 
 /* syscall proxy handler from an EIO trace, architect registers
    and memory are assumed to be precise when this function is called,
    register and memory are updated with the results of the sustem call */
 void
-eio_read_trace(FILE *eio_fd,			/* EIO stream file desc */
+eio_read_trace(int tid,
+         FILE *eio_fd,			/* EIO stream file desc */
 	       counter_t icnt,			/* instruction count */
 	       struct regs_t *regs,		/* registers to update */
 	       mem_access_fn mem_fn,		/* generic memory accessor */
@@ -648,7 +649,7 @@ eio_read_trace(FILE *eio_fd,			/* EIO stream file desc */
   /* exit() system calls get executed for real... */
   if (MD_EXIT_SYSCALL(regs))
     {
-      sys_syscall(regs, mem_fn, mem, inst, FALSE);
+      sys_syscall(tid, regs, mem_fn, mem, inst, FALSE);
       panic("returned from exit() system call");
     }
 
@@ -656,7 +657,7 @@ eio_read_trace(FILE *eio_fd,			/* EIO stream file desc */
   exo = exo_read(eio_fd);
 
   /* one more transaction processed */
-  eio_trans_icnt = icnt;
+  eio_trans_icnt[tid] = icnt;
 
   /* pull apart the EIO transaction (EXO format) */
   if (!exo
@@ -738,10 +739,10 @@ eio_read_trace(FILE *eio_fd,			/* EIO stream file desc */
       /* simulate view'able I/O */
       if (MD_OUTPUT_SYSCALL(regs))
 	{
-	  if (sim_progfd)
+	  if (sim_progfd[tid])
 	    {
 	      /* redirect program output to file */
-	      fwrite(blob->as_blob.data, 1, blob->as_blob.size, sim_progfd);
+	      fwrite(blob->as_blob.data, 1, blob->as_blob.size, sim_progfd[tid]);
 	    }
 	  else
 	    {
@@ -760,7 +761,7 @@ eio_read_trace(FILE *eio_fd,			/* EIO stream file desc */
   brkrec = exo_outregs->as_list.head;
   if (!brkrec || brkrec->ec != ec_address)
     fatal("EIO trace inconsistency: missing memory breakpoint");
-  ld_brk_point = (md_addr_t)brkrec->as_integer.val;
+  ld_brk_point[tid] = (md_addr_t)brkrec->as_integer.val;
 
   /* write integer register outputs */
   for (i=MD_FIRST_OUT_REG, regrec=exo_outregs->as_list.head->next;
@@ -812,7 +813,7 @@ eio_read_trace(FILE *eio_fd,			/* EIO stream file desc */
 
 /* fast forward EIO trace EIO_FD to the transaction just after ICNT */
 void
-eio_fast_forward(FILE *eio_fd, counter_t icnt)
+eio_fast_forward(int tid, FILE *eio_fd, counter_t icnt)
 {
   struct exo_term_t *exo, *exo_icnt;
 
@@ -825,7 +826,7 @@ eio_fast_forward(FILE *eio_fd, counter_t icnt)
 	fatal("could not fast forward to EIO checkpoint");
 
       /* one more transaction processed */
-      eio_trans_icnt = icnt;
+      eio_trans_icnt[tid] = icnt;
 
       /* pull apart the EIO transaction (EXO format) */
       if (!exo

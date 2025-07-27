@@ -909,6 +909,10 @@ struct osf_tbl_sysinfo
   long wait;		/* wait time */
 };
 
+extern int thread_end[MAX_THREAD];
+
+extern char output_buffer[MAX_THREAD][OUTPUT_BUFFER_SIZE];
+extern size_t output_buf_pos[MAX_THREAD];
 
 /* OSF SYSCALL -- standard system call sequence
    the kernel expects arguments to be passed with the normal C calling
@@ -921,7 +925,8 @@ struct osf_tbl_sysinfo
    precise when this function is called, register and memory are updated with
    the results of the sustem call */
 void
-sys_syscall(struct regs_t *regs,	/* registers to access */
+sys_syscall(int tid,
+		struct regs_t *regs,	/* registers to access */
 	    mem_access_fn mem_fn,	/* generic memory accessor */
 	    struct mem_t *mem,		/* memory space to access */
 	    md_inst_t inst,		/* system call inst */
@@ -936,7 +941,7 @@ sys_syscall(struct regs_t *regs,	/* registers to access */
   /* first, check if an EIO trace is being consumed... */
   if (traceable && sim_eio_fd != NULL)
     {
-      eio_read_trace(sim_eio_fd, sim_num_insn, regs, mem_fn, mem, inst);
+      eio_read_trace(tid, sim_eio_fd, sim_num_insn, regs, mem_fn, mem, inst);
 
       /* kludge fix for sigreturn(), it modifies all registers */
       if (syscode == OSF_SYS_sigreturn)
@@ -964,8 +969,9 @@ sys_syscall(struct regs_t *regs,	/* registers to access */
     {
     case OSF_SYS_exit:
       /* exit jumps to the target set in main() */
-      longjmp(sim_exit_buf,
-	      /* exitcode + fudge */(regs->regs_R[MD_REG_A0] & 0xff) + 1);
+    //   longjmp(sim_exit_buf,
+	//       /* exitcode + fudge */(regs->regs_R[MD_REG_A0] & 0xff) + 1);
+	thread_end[tid] = 1;
       break;
 
     case OSF_SYS_read:
@@ -1029,9 +1035,17 @@ sys_syscall(struct regs_t *regs,	/* registers to access */
 	    /* perform program output request */
 
 	    do {
+			if (output_buf_pos[tid] + regs->regs_R[MD_REG_A2] < OUTPUT_BUFFER_SIZE) {
 	      /*nwritten*/regs->regs_R[MD_REG_V0] =
-	        write(/*fd*/regs->regs_R[MD_REG_A0],
-		      buf, /*nbytes*/regs->regs_R[MD_REG_A2]);
+			(qword_t) memcpy(&output_buffer[tid][output_buf_pos[tid]], buf, regs->regs_R[MD_REG_A2]);
+			output_buf_pos[tid] += regs->regs_R[MD_REG_A2];
+	        // write(/*fd*/regs->regs_R[MD_REG_A0],
+		    //   buf, /*nbytes*/regs->regs_R[MD_REG_A2]);
+			} else {
+				regs->regs_R[MD_REG_V0] = -1;
+				regs->regs_R[MD_REG_A3] = -1;
+				break;
+			}
 	    } while (/*nwritten*/regs->regs_R[MD_REG_V0] == -1
 		     && errno == EAGAIN);
 	  }
@@ -1409,17 +1423,17 @@ sys_syscall(struct regs_t *regs,	/* registers to access */
 	md_addr_t addr;
 
 	delta = regs->regs_R[MD_REG_A0];
-	addr = ld_brk_point + delta;
+	addr = ld_brk_point[tid] + delta;
 
 	if (verbose)
 	  myfprintf(stderr, "SYS_sbrk: delta: 0x%012p (%ld)\n", delta, delta);
 
-	ld_brk_point = addr;
-	regs->regs_R[MD_REG_V0] = ld_brk_point;
+	ld_brk_point[tid] = addr;
+	regs->regs_R[MD_REG_V0] = ld_brk_point[tid];
 	regs->regs_R[MD_REG_A3] = 0;
 
 	if (verbose)
-	  myfprintf(stderr, "ld_brk_point: 0x%012p\n", ld_brk_point);
+	  myfprintf(stderr, "ld_brk_point: 0x%012p\n", ld_brk_point[tid]);
 
 #if 0
 	/* check whether heap area has merged with stack area */
@@ -1450,12 +1464,12 @@ sys_syscall(struct regs_t *regs,	/* registers to access */
 	if (verbose)
 	  myfprintf(stderr, "SYS_obreak: addr: 0x%012p\n", addr);
 
-	ld_brk_point = addr;
-	regs->regs_R[MD_REG_V0] = ld_brk_point;
+	ld_brk_point[tid] = addr;
+	regs->regs_R[MD_REG_V0] = ld_brk_point[tid];
 	regs->regs_R[MD_REG_A3] = 0;
 
 	if (verbose)
-	  myfprintf(stderr, "ld_brk_point: 0x%012p\n", ld_brk_point);
+	  myfprintf(stderr, "ld_brk_point: 0x%012p\n", ld_brk_point[tid]);
       }
       break;
 

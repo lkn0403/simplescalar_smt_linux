@@ -52,6 +52,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "sim.h"
 #include "host.h"
 #include "misc.h"
 #include "loader.h"
@@ -66,31 +67,31 @@
 /* #define PRINT_SYMS */
 
 /* symbol database in no particular order */
-struct sym_sym_t *sym_db = NULL;
+struct sym_sym_t *sym_db[MAX_THREAD];
 
 /* all symbol sorted by address */
-int sym_nsyms = 0;
-struct sym_sym_t **sym_syms = NULL;
+int sym_nsyms[MAX_THREAD];
+struct sym_sym_t **sym_syms[MAX_THREAD];
 
 /* all symbols sorted by name */
-struct sym_sym_t **sym_syms_by_name = NULL;
+struct sym_sym_t **sym_syms_by_name[MAX_THREAD];
 
 /* text symbols sorted by address */
-int sym_ntextsyms = 0;
-struct sym_sym_t **sym_textsyms = NULL;
+int sym_ntextsyms[MAX_THREAD];
+struct sym_sym_t **sym_textsyms[MAX_THREAD];
 
 /* text symbols sorted by name */
-struct sym_sym_t **sym_textsyms_by_name = NULL;
+struct sym_sym_t **sym_textsyms_by_name[MAX_THREAD];
 
 /* data symbols sorted by address */
-int sym_ndatasyms = 0;
-struct sym_sym_t **sym_datasyms = NULL;
+int sym_ndatasyms[MAX_THREAD];
+struct sym_sym_t **sym_datasyms[MAX_THREAD];
 
 /* data symbols sorted by name */
-struct sym_sym_t **sym_datasyms_by_name = NULL;
+struct sym_sym_t **sym_datasyms_by_name[MAX_THREAD];
 
 /* symbols loaded? */
-static int syms_loaded = FALSE;
+static int syms_loaded[MAX_THREAD];
 
 #ifdef PRINT_SYMS
 /* convert BFD symbols flags to a printable string */
@@ -215,7 +216,8 @@ ncmp(struct sym_sym_t **sym1, struct sym_sym_t **sym2)
 
 /* load symbols out of FNAME */
 void
-sym_loadsyms(char *fname,	/* file name containing symbols */
+sym_loadsyms(int tid,
+      char *fname,	/* file name containing symbols */
 	     int load_locals)	/* load local symbols */
 {
   int i, debug_cnt;
@@ -233,7 +235,7 @@ sym_loadsyms(char *fname,	/* file name containing symbols */
   struct ecoff_EXTR *extr;
 #endif /* BFD_LOADER */
 
-  if (syms_loaded)
+  if (syms_loaded[tid])
     {
       /* symbols are already loaded */
       /* FIXME: can't handle symbols from multiple files */
@@ -280,7 +282,7 @@ sym_loadsyms(char *fname,	/* file name containing symbols */
        */
 
       /* first count symbols */
-      sym_ndatasyms = 0; sym_ntextsyms = 0;
+      sym_ndatasyms[tid] = 0; sym_ntextsyms[tid] = 0;
       for (i=0; i < nsyms; i++)
 	{
 	  asymbol *sym = syms[i];
@@ -296,7 +298,7 @@ sym_loadsyms(char *fname,	/* file name containing symbols */
 	      && RELEVANT_SCOPE(sym))
 	    {
 	      /* data segment symbol */
-	      sym_ndatasyms++;
+	      sym_ndatasyms[tid]++;
 #ifdef PRINT_SYMS
 	      fprintf(stderr,
 		      "+sym: %s  sect: %s  flags: %s  value: 0x%08lx\n",
@@ -310,7 +312,7 @@ sym_loadsyms(char *fname,	/* file name containing symbols */
 		   && RELEVANT_SCOPE(sym))
 	    {
 	      /* text segment symbol */
-	      sym_ntextsyms++;
+	      sym_ntextsyms[tid]++;
 #ifdef PRINT_SYMS
 	      fprintf(stderr,
 		      "+sym: %s  sect: %s  flags: %s  value: 0x%08lx\n",
@@ -329,7 +331,7 @@ sym_loadsyms(char *fname,	/* file name containing symbols */
 #endif /* PRINT_SYMS */
 	    }
 	}
-      sym_nsyms = sym_ntextsyms + sym_ndatasyms;
+      sym_nsyms = sym_ntextsyms[tid] + sym_ndatasyms[tid];
       if (sym_nsyms <= 0)
 	fatal("`%s' has no text or data symbols", fname);
 
@@ -443,8 +445,8 @@ sym_loadsyms(char *fname,	/* file name containing symbols */
   len = symhdr.isymMax + symhdr.iextMax;
   if (len <= 0)
     fatal("`%s' has no text or data symbols", fname);
-  sym_db = (struct sym_sym_t *)calloc(len, sizeof(struct sym_sym_t));
-  if (!sym_db)
+  sym_db[tid] = (struct sym_sym_t *)calloc(len, sizeof(struct sym_sym_t));
+  if (!sym_db[tid])
     fatal("out of virtual memory");
 
   /* allocate space for the external symbol entries */
@@ -457,7 +459,7 @@ sym_loadsyms(char *fname,	/* file name containing symbols */
   if (fread(extr, sizeof(struct ecoff_EXTR), symhdr.iextMax, fobj) < 0)
     fatal("error reading external symbol entries");
 
-  sym_nsyms = 0; sym_ndatasyms = 0; sym_ntextsyms = 0;
+  sym_nsyms[tid] = 0; sym_ndatasyms[tid] = 0; sym_ntextsyms[tid] = 0;
 
   /* convert symbols to internal format */
   for (i=0; i < symhdr.iextMax; i++)
@@ -485,28 +487,28 @@ sym_loadsyms(char *fname,	/* file name containing symbols */
 	case ECOFF_stGlobal:
 	case ECOFF_stStatic:
 	  /* from data segment */
-	  sym_db[sym_nsyms].name = mystrdup(&strtab[str_offset]);
-	  sym_db[sym_nsyms].seg = ss_data;
-	  sym_db[sym_nsyms].initialized = /* FIXME: ??? */TRUE;
-	  sym_db[sym_nsyms].pub = /* FIXME: ??? */TRUE;
-	  sym_db[sym_nsyms].local = /* FIXME: ??? */FALSE;
-	  sym_db[sym_nsyms].addr = extr[i].asym.value;
-	  sym_nsyms++;
-	  sym_ndatasyms++;
+	  sym_db[tid][sym_nsyms[tid]].name = mystrdup(&strtab[str_offset]);
+	  sym_db[tid][sym_nsyms[tid]].seg = ss_data;
+	  sym_db[tid][sym_nsyms[tid]].initialized = /* FIXME: ??? */TRUE;
+	  sym_db[tid][sym_nsyms[tid]].pub = /* FIXME: ??? */TRUE;
+	  sym_db[tid][sym_nsyms[tid]].local = /* FIXME: ??? */FALSE;
+	  sym_db[tid][sym_nsyms[tid]].addr = extr[i].asym.value;
+	  sym_nsyms[tid]++;
+	  sym_ndatasyms[tid]++;
 	  break;
 
 	case ECOFF_stProc:
 	case ECOFF_stStaticProc:
 	case ECOFF_stLabel:
 	  /* from text segment */
-	  sym_db[sym_nsyms].name = mystrdup(&strtab[str_offset]);
-	  sym_db[sym_nsyms].seg = ss_text;
-	  sym_db[sym_nsyms].initialized = /* FIXME: ??? */TRUE;
-	  sym_db[sym_nsyms].pub = /* FIXME: ??? */TRUE;
-	  sym_db[sym_nsyms].local = /* FIXME: ??? */FALSE;
-	  sym_db[sym_nsyms].addr = extr[i].asym.value;
-	  sym_nsyms++;
-	  sym_ntextsyms++;
+	  sym_db[tid][sym_nsyms[tid]].name = mystrdup(&strtab[str_offset]);
+	  sym_db[tid][sym_nsyms[tid]].seg = ss_text;
+	  sym_db[tid][sym_nsyms[tid]].initialized = /* FIXME: ??? */TRUE;
+	  sym_db[tid][sym_nsyms[tid]].pub = /* FIXME: ??? */TRUE;
+	  sym_db[tid][sym_nsyms[tid]].local = /* FIXME: ??? */FALSE;
+	  sym_db[tid][sym_nsyms[tid]].addr = extr[i].asym.value;
+	  sym_nsyms[tid]++;
+	  sym_ntextsyms[tid]++;
 	  break;
 
 	default:
@@ -530,112 +532,112 @@ sym_loadsyms(char *fname,	/* file name containing symbols */
    */
 
   /* all symbols sorted by address and name */
-  sym_syms =
-    (struct sym_sym_t **)calloc(sym_nsyms, sizeof(struct sym_sym_t *));
-  if (!sym_syms)
+  sym_syms[tid] =
+    (struct sym_sym_t **)calloc(sym_nsyms[tid], sizeof(struct sym_sym_t *));
+  if (!sym_syms[tid])
     fatal("out of virtual memory");
 
-  sym_syms_by_name =
-    (struct sym_sym_t **)calloc(sym_nsyms, sizeof(struct sym_sym_t *));
-  if (!sym_syms_by_name)
+  sym_syms_by_name[tid] =
+    (struct sym_sym_t **)calloc(sym_nsyms[tid], sizeof(struct sym_sym_t *));
+  if (!sym_syms_by_name[tid])
     fatal("out of virtual memory");
 
-  for (debug_cnt=0, i=0; i<sym_nsyms; i++)
+  for (debug_cnt=0, i=0; i<sym_nsyms[tid]; i++)
     {
-      sym_syms[debug_cnt] = &sym_db[i];
-      sym_syms_by_name[debug_cnt] = &sym_db[i];
+      sym_syms[tid][debug_cnt] = &sym_db[tid][i];
+      sym_syms_by_name[tid][debug_cnt] = &sym_db[tid][i];
       debug_cnt++;
     }
   /* sanity check */
-  if (debug_cnt != sym_nsyms)
+  if (debug_cnt != sym_nsyms[tid])
     panic("could not locate all symbols");
 
   /* sort by address */
-  qsort(sym_syms, sym_nsyms, sizeof(struct sym_sym_t *), (void *)acmp);
+  qsort(sym_syms[tid], sym_nsyms[tid], sizeof(struct sym_sym_t *), (void *)acmp);
 
   /* sort by name */
-  qsort(sym_syms_by_name, sym_nsyms, sizeof(struct sym_sym_t *), (void *)ncmp);
+  qsort(sym_syms_by_name[tid], sym_nsyms[tid], sizeof(struct sym_sym_t *), (void *)ncmp);
 
   /* text segment sorted by address and name */
-  sym_textsyms =
-    (struct sym_sym_t **)calloc(sym_ntextsyms, sizeof(struct sym_sym_t *));
-  if (!sym_textsyms)
+  sym_textsyms[tid] =
+    (struct sym_sym_t **)calloc(sym_ntextsyms[tid], sizeof(struct sym_sym_t *));
+  if (!sym_textsyms[tid])
     fatal("out of virtual memory");
 
-  sym_textsyms_by_name =
-    (struct sym_sym_t **)calloc(sym_ntextsyms, sizeof(struct sym_sym_t *));
-  if (!sym_textsyms_by_name)
+  sym_textsyms_by_name[tid] =
+    (struct sym_sym_t **)calloc(sym_ntextsyms[tid], sizeof(struct sym_sym_t *));
+  if (!sym_textsyms_by_name[tid])
     fatal("out of virtual memory");
 
-  for (debug_cnt=0, i=0; i<sym_nsyms; i++)
+  for (debug_cnt=0, i=0; i<sym_nsyms[tid]; i++)
     {
-      if (sym_db[i].seg == ss_text)
+      if (sym_db[tid][i].seg == ss_text)
 	{
-	  sym_textsyms[debug_cnt] = &sym_db[i];
-	  sym_textsyms_by_name[debug_cnt] = &sym_db[i];
+	  sym_textsyms[tid][debug_cnt] = &sym_db[tid][i];
+	  sym_textsyms_by_name[tid][debug_cnt] = &sym_db[tid][i];
 	  debug_cnt++;
 	}
     }
   /* sanity check */
-  if (debug_cnt != sym_ntextsyms)
+  if (debug_cnt != sym_ntextsyms[tid])
     panic("could not locate all text symbols");
 
   /* sort by address */
-  qsort(sym_textsyms, sym_ntextsyms, sizeof(struct sym_sym_t *), (void *)acmp);
+  qsort(sym_textsyms[tid], sym_ntextsyms[tid], sizeof(struct sym_sym_t *), (void *)acmp);
 
   /* sort by name */
-  qsort(sym_textsyms_by_name, sym_ntextsyms,
+  qsort(sym_textsyms_by_name[tid], sym_ntextsyms[tid],
 	sizeof(struct sym_sym_t *), (void *)ncmp);
 
   /* data segment sorted by address and name */
-  sym_datasyms =
-    (struct sym_sym_t **)calloc(sym_ndatasyms, sizeof(struct sym_sym_t *));
-  if (!sym_datasyms)
+  sym_datasyms[tid] =
+    (struct sym_sym_t **)calloc(sym_ndatasyms[tid], sizeof(struct sym_sym_t *));
+  if (!sym_datasyms[tid])
     fatal("out of virtual memory");
 
-  sym_datasyms_by_name =
-    (struct sym_sym_t **)calloc(sym_ndatasyms, sizeof(struct sym_sym_t *));
-  if (!sym_datasyms_by_name)
+  sym_datasyms_by_name[tid] =
+    (struct sym_sym_t **)calloc(sym_ndatasyms[tid], sizeof(struct sym_sym_t *));
+  if (!sym_datasyms_by_name[tid])
     fatal("out of virtual memory");
 
-  for (debug_cnt=0, i=0; i<sym_nsyms; i++)
+  for (debug_cnt=0, i=0; i<sym_nsyms[tid]; i++)
     {
-      if (sym_db[i].seg == ss_data)
+      if (sym_db[tid][i].seg == ss_data)
 	{
-	  sym_datasyms[debug_cnt] = &sym_db[i];
-	  sym_datasyms_by_name[debug_cnt] = &sym_db[i];
+	  sym_datasyms[tid][debug_cnt] = &sym_db[tid][i];
+	  sym_datasyms_by_name[tid][debug_cnt] = &sym_db[tid][i];
 	  debug_cnt++;
 	}
     }
   /* sanity check */
-  if (debug_cnt != sym_ndatasyms)
+  if (debug_cnt != sym_ndatasyms[tid])
     panic("could not locate all data symbols");
       
   /* sort by address */
-  qsort(sym_datasyms, sym_ndatasyms, sizeof(struct sym_sym_t *), (void *)acmp);
+  qsort(sym_datasyms[tid], sym_ndatasyms[tid], sizeof(struct sym_sym_t *), (void *)acmp);
 
   /* sort by name */
-  qsort(sym_datasyms_by_name, sym_ndatasyms,
+  qsort(sym_datasyms_by_name[tid], sym_ndatasyms[tid],
 	sizeof(struct sym_sym_t *), (void *)ncmp);
 
   /* compute symbol sizes */
-  for (i=0; i<sym_ntextsyms; i++)
+  for (i=0; i<sym_ntextsyms[tid]; i++)
     {
-      sym_textsyms[i]->size =
-	(i != (sym_ntextsyms - 1)
-	 ? (sym_textsyms[i+1]->addr - sym_textsyms[i]->addr)
-	 : ((ld_text_base + ld_text_size) - sym_textsyms[i]->addr));
+      sym_textsyms[tid][i]->size =
+	(i != (sym_ntextsyms[tid] - 1)
+	 ? (sym_textsyms[tid][i+1]->addr - sym_textsyms[tid][i]->addr)
+	 : ((ld_text_base[tid] + ld_text_size[tid]) - sym_textsyms[tid][i]->addr));
     }
-  for (i=0; i<sym_ndatasyms; i++)
+  for (i=0; i<sym_ndatasyms[tid]; i++)
     {
-      sym_datasyms[i]->size =
-	(i != (sym_ndatasyms - 1)
-	 ? (sym_datasyms[i+1]->addr - sym_datasyms[i]->addr)
-	 : ((ld_data_base + ld_data_size) - sym_datasyms[i]->addr));
+      sym_datasyms[tid][i]->size =
+	(i != (sym_ndatasyms[tid] - 1)
+	 ? (sym_datasyms[tid][i+1]->addr - sym_datasyms[tid][i]->addr)
+	 : ((ld_data_base[tid] + ld_data_size[tid]) - sym_datasyms[tid][i]->addr));
     }
 
   /* symbols are now available for use */
-  syms_loaded = TRUE;
+  syms_loaded[tid] = TRUE;
 }
 
 /* dump symbol SYM to output stream FD */
@@ -656,17 +658,17 @@ sym_dumpsym(struct sym_sym_t *sym,	/* symbol to display */
 
 /* dump all symbols to output stream FD */
 void
-sym_dumpsyms(FILE *fd)			/* output stream */
+sym_dumpsyms(int tid, FILE *fd)			/* output stream */
 {
   int i;
 
-  for (i=0; i < sym_nsyms; i++)
-    sym_dumpsym(sym_syms[i], fd);
+  for (i=0; i < sym_nsyms[tid]; i++)
+    sym_dumpsym(sym_syms[tid][i], fd);
 }
 
 /* dump all symbol state to output stream FD */
 void
-sym_dumpstate(FILE *fd)			/* output stream */
+sym_dumpstate(int tid, FILE *fd)			/* output stream */
 {
   int i;
 
@@ -674,28 +676,28 @@ sym_dumpstate(FILE *fd)			/* output stream */
     fd = stderr;
 
   fprintf(fd, "** All symbols sorted by address:\n");
-  for (i=0; i < sym_nsyms; i++)
-    sym_dumpsym(sym_syms[i], fd);
+  for (i=0; i < sym_nsyms[tid]; i++)
+    sym_dumpsym(sym_syms[tid][i], fd);
 
   fprintf(fd, "\n** All symbols sorted by name:\n");
-  for (i=0; i < sym_nsyms; i++)
-    sym_dumpsym(sym_syms_by_name[i], fd);
+  for (i=0; i < sym_nsyms[tid]; i++)
+    sym_dumpsym(sym_syms_by_name[tid][i], fd);
 
   fprintf(fd, "** Text symbols sorted by address:\n");
-  for (i=0; i < sym_ntextsyms; i++)
-    sym_dumpsym(sym_textsyms[i], fd);
+  for (i=0; i < sym_ntextsyms[tid]; i++)
+    sym_dumpsym(sym_textsyms[tid][i], fd);
 
   fprintf(fd, "\n** Text symbols sorted by name:\n");
-  for (i=0; i < sym_ntextsyms; i++)
-    sym_dumpsym(sym_textsyms_by_name[i], fd);
+  for (i=0; i < sym_ntextsyms[tid]; i++)
+    sym_dumpsym(sym_textsyms_by_name[tid][i], fd);
 
   fprintf(fd, "** Data symbols sorted by address:\n");
-  for (i=0; i < sym_ndatasyms; i++)
-    sym_dumpsym(sym_datasyms[i], fd);
+  for (i=0; i < sym_ndatasyms[tid]; i++)
+    sym_dumpsym(sym_datasyms[tid][i], fd);
 
   fprintf(fd, "\n** Data symbols sorted by name:\n");
-  for (i=0; i < sym_ndatasyms; i++)
-    sym_dumpsym(sym_datasyms_by_name[i], fd);
+  for (i=0; i < sym_ndatasyms[tid]; i++)
+    sym_dumpsym(sym_datasyms_by_name[tid][i], fd);
 }
 
 /* bind address ADDR to a symbol in symbol database DB, the address must
@@ -703,7 +705,7 @@ sym_dumpstate(FILE *fd)			/* output stream */
    requested symbol database is returned in *PINDEX if the pointer is
    non-NULL */
 struct sym_sym_t *			/* symbol found, or NULL */
-sym_bind_addr(md_addr_t addr,	/* address of symbol to locate */
+sym_bind_addr(int tid, md_addr_t addr,	/* address of symbol to locate */
 	      int *pindex,		/* ptr to index result var */
 	      int exact,		/* require exact address match? */
 	      enum sym_db_t db)		/* symbol database to search */
@@ -714,16 +716,16 @@ sym_bind_addr(md_addr_t addr,	/* address of symbol to locate */
   switch (db)
     {
     case sdb_any:
-      syms = sym_syms;
-      nsyms = sym_nsyms;
+      syms = sym_syms[tid];
+      nsyms = sym_nsyms[tid];
       break;
     case sdb_text:
-      syms = sym_textsyms;
-      nsyms = sym_ntextsyms;
+      syms = sym_textsyms[tid];
+      nsyms = sym_ntextsyms[tid];
       break;
     case sdb_data:
-      syms = sym_datasyms;
-      nsyms = sym_ndatasyms;
+      syms = sym_datasyms[tid];
+      nsyms = sym_ndatasyms[tid];
       break;
     default:
       panic("bogus symbol database");
@@ -772,7 +774,7 @@ sym_bind_addr(md_addr_t addr,	/* address of symbol to locate */
    in the requested symbol database is returned in *PINDEX if the pointer is
    non-NULL */
 struct sym_sym_t *				/* symbol found, or NULL */
-sym_bind_name(char *name,			/* symbol name to locate */
+sym_bind_name(int tid, char *name,			/* symbol name to locate */
 	      int *pindex,			/* ptr to index result var */
 	      enum sym_db_t db)			/* symbol database to search */
 {
@@ -782,16 +784,16 @@ sym_bind_name(char *name,			/* symbol name to locate */
   switch (db)
     {
     case sdb_any:
-      syms = sym_syms_by_name;
-      nsyms = sym_nsyms;
+      syms = sym_syms_by_name[tid];
+      nsyms = sym_nsyms[tid];
       break;
     case sdb_text:
-      syms = sym_textsyms_by_name;
-      nsyms = sym_ntextsyms;
+      syms = sym_textsyms_by_name[tid];
+      nsyms = sym_ntextsyms[tid];
       break;
     case sdb_data:
-      syms = sym_datasyms_by_name;
-      nsyms = sym_ndatasyms;
+      syms = sym_datasyms_by_name[tid];
+      nsyms = sym_ndatasyms[tid];
       break;
     default:
       panic("bogus symbol database");

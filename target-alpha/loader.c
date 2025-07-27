@@ -71,61 +71,63 @@
 /* amount of tail padding added to all loaded text segments */
 #define TEXT_TAIL_PADDING 0 /* was: 128 */
 
+/* ld_text_base ld_text_size ld_data_base ld_brk_point ld_data_size ld_stack_base ld_stack_size ld_stack_min */
+
 /* program text (code) segment base */
-md_addr_t ld_text_base = 0;
+md_addr_t ld_text_base[MAX_THREAD];
 
 /* program text (code) size in bytes */
-unsigned int ld_text_size = 0;
+unsigned int ld_text_size[MAX_THREAD];
 
 /* program initialized data segment base */
-md_addr_t ld_data_base = 0;
+md_addr_t ld_data_base[MAX_THREAD];
 
 /* top of the data segment */
-md_addr_t ld_brk_point = 0;
+md_addr_t ld_brk_point[MAX_THREAD];
 
 /* program initialized ".data" and uninitialized ".bss" size in bytes */
-unsigned int ld_data_size = 0;
+unsigned int ld_data_size[MAX_THREAD];
 
 /* program stack segment base (highest address in stack) */
-md_addr_t ld_stack_base = 0;
+md_addr_t ld_stack_base[MAX_THREAD];
 
 /* program initial stack size */
-unsigned int ld_stack_size = 0;
+unsigned int ld_stack_size[MAX_THREAD];
 
 /* lowest address accessed on the stack */
-md_addr_t ld_stack_min = -1;
+md_addr_t ld_stack_min[MAX_THREAD];
 
 /* program file name */
-char *ld_prog_fname = NULL;
+char *ld_prog_fname[MAX_THREAD];
 
 /* program entry point (initial PC) */
-md_addr_t ld_prog_entry = 0;
+md_addr_t ld_prog_entry[MAX_THREAD];
 
 /* program environment base address address */
-md_addr_t ld_environ_base = 0;
+md_addr_t ld_environ_base[MAX_THREAD];
 
 /* target executable endian-ness, non-zero if big endian */
 int ld_target_big_endian;
 
 /* register simulator-specific statistics */
 void
-ld_reg_stats(struct stat_sdb_t *sdb)	/* stats data base */
+ld_reg_stats(int tid, struct stat_sdb_t *sdb)	/* stats data base */
 {
   stat_reg_addr(sdb, "ld_text_base",
 		"program text (code) segment base",
-		&ld_text_base, ld_text_base, "0x%010p");
+		&ld_text_base[tid], ld_text_base[tid], "0x%010p");
   stat_reg_uint(sdb, "ld_text_size",
 		"program text (code) size in bytes",
-		&ld_text_size, ld_text_size, NULL);
+		&ld_text_size[tid], ld_text_size[tid], NULL);
   stat_reg_addr(sdb, "ld_data_base",
 		"program initialized data segment base",
-		&ld_data_base, ld_data_base, "0x%010p");
+		&ld_data_base[tid], ld_data_base[tid], "0x%010p");
   stat_reg_uint(sdb, "ld_data_size",
 		"program init'ed `.data' and uninit'ed `.bss' size in bytes",
-		&ld_data_size, ld_data_size, NULL);
+		&ld_data_size[tid], ld_data_size[tid], NULL);
   stat_reg_addr(sdb, "ld_stack_base",
 		"program stack segment base (highest address in stack)",
-		&ld_stack_base, ld_stack_base, "0x%010p");
+		&ld_stack_base[tid], ld_stack_base[tid], "0x%010p");
 #if 0 /* FIXME: broken... */
   stat_reg_addr(sdb, "ld_stack_min",
 		"program stack segment lowest address",
@@ -133,13 +135,13 @@ ld_reg_stats(struct stat_sdb_t *sdb)	/* stats data base */
 #endif
   stat_reg_uint(sdb, "ld_stack_size",
 		"program initial stack size",
-		&ld_stack_size, ld_stack_size, NULL);
+		&ld_stack_size[tid], ld_stack_size[tid], NULL);
   stat_reg_addr(sdb, "ld_prog_entry",
 		"program entry point (initial PC)",
-		&ld_prog_entry, ld_prog_entry, "0x%010p");
+		&ld_prog_entry[tid], ld_prog_entry[tid], "0x%010p");
   stat_reg_addr(sdb, "ld_environ_base",
 		"program environment base address address",
-		&ld_environ_base, ld_environ_base, "0x%010p");
+		&ld_environ_base[tid], ld_environ_base[tid], "0x%010p");
   stat_reg_int(sdb, "ld_target_big_endian",
 	       "target executable endian-ness, non-zero if big endian",
 	       &ld_target_big_endian, ld_target_big_endian, NULL);
@@ -149,7 +151,8 @@ ld_reg_stats(struct stat_sdb_t *sdb)	/* stats data base */
 /* load program text and initialized data into simulated virtual memory
    space and initialize program segment range variables */
 void
-ld_load_prog(char *fname,		/* program to load */
+ld_load_prog(int tid,
+		 char *fname,		/* program to load */
 	     int argc, char **argv,	/* simulated program cmd line args */
 	     char **envp,		/* simulated program environment */
 	     struct regs_t *regs,	/* registers to initialize for load */
@@ -177,7 +180,7 @@ ld_load_prog(char *fname,		/* program to load */
       sim_eio_fd = eio_open(fname);
 
       /* load initial state checkpoint */
-      if (eio_read_chkpt(regs, mem, sim_eio_fd) != -1)
+      if (eio_read_chkpt(tid, regs, mem, sim_eio_fd) != -1)
 	fatal("bad initial checkpoint in EIO file");
 
       /* load checkpoint? */
@@ -198,17 +201,17 @@ ld_load_prog(char *fname,		/* program to load */
 	  chkpt_fd = eio_open(sim_chkpt_fname);
 
 	  /* load the state image */
-	  restore_icnt = eio_read_chkpt(regs, mem, chkpt_fd);
+	  restore_icnt = eio_read_chkpt(tid, regs, mem, chkpt_fd);
 
 	  /* fast forward the baseline EIO trace to checkpoint location */
 	  myfprintf(stderr, "sim: fast forwarding to instruction %n\n",
 		    restore_icnt);
-	  eio_fast_forward(sim_eio_fd, restore_icnt);
+	  eio_fast_forward(tid, sim_eio_fd, restore_icnt);
 	}
 
       /* computed state... */
-      ld_environ_base = regs->regs_R[MD_REG_SP];
-      ld_prog_entry = regs->regs_PC;
+      ld_environ_base[tid] = regs->regs_R[MD_REG_SP];
+      ld_prog_entry[tid] = regs->regs_PC;
 
       /* fini... */
       return;
@@ -380,7 +383,7 @@ ld_load_prog(char *fname,		/* program to load */
     struct ecoff_scnhdr shdr;
 
     /* record profile file name */
-    ld_prog_fname = argv[0];
+    ld_prog_fname[tid] = argv[0];
 
     /* load the program into memory, try both endians */
 #if defined(__CYGWIN32__) || defined(_MSC_VER)
@@ -409,15 +412,15 @@ ld_load_prog(char *fname,		/* program to load */
     if (fread(&ahdr, sizeof(struct ecoff_aouthdr), 1, fobj) < 1)
       fatal("cannot read AOUT header from executable `%s'", argv[0]);
 
-    ld_text_base = MD_SWAPQ(ahdr.text_start);
-    ld_text_size = MD_SWAPQ(ahdr.tsize);
-    ld_prog_entry = MD_SWAPQ(ahdr.entry);
-    ld_data_base = MD_SWAPQ(ahdr.data_start);
-    ld_data_size = MD_SWAPQ(ahdr.dsize) + MD_SWAPQ(ahdr.bsize);
+    ld_text_base[tid] = MD_SWAPQ(ahdr.text_start);
+    ld_text_size[tid] = MD_SWAPQ(ahdr.tsize);
+    ld_prog_entry[tid] = MD_SWAPQ(ahdr.entry);
+    ld_data_base[tid] = MD_SWAPQ(ahdr.data_start);
+    ld_data_size[tid] = MD_SWAPQ(ahdr.dsize) + MD_SWAPQ(ahdr.bsize);
     regs->regs_R[MD_REG_GP] = MD_SWAPQ(ahdr.gp_value);
 
     /* compute data segment size from data break point */
-    data_break = ld_data_base + ld_data_size;
+    data_break = ld_data_base[tid] + ld_data_size[tid];
 
     /* seek to the beginning of the first section header, the file header comes
        first, followed by the optional header (this is the aouthdr), the size
@@ -569,11 +572,11 @@ ld_load_prog(char *fname,		/* program to load */
 #endif /* BFD_LOADER */
 
   /* perform sanity checks on segment ranges */
-  if (!ld_text_base || !ld_text_size)
+  if (!ld_text_base[tid] || !ld_text_size[tid])
     fatal("executable is missing a `.text' section");
-  if (!ld_data_base || !ld_data_size)
+  if (!ld_data_base[tid] || !ld_data_size[tid])
     fatal("executable is missing a `.data' section");
-  if (!ld_prog_entry)
+  if (!ld_prog_entry[tid])
     fatal("program entry point not specified");
 
   /* determine byte/words swapping required to execute on this host */
@@ -604,15 +607,15 @@ ld_load_prog(char *fname,		/* program to load */
 
   /* set up a local stack pointer, this is where the argv and envp
      data is written into program memory */
-  ld_stack_base = ld_text_base - (409600+4096);
+  ld_stack_base[tid] = ld_text_base[tid] - (409600+4096);
 #if 0
   sp = ROUND_DOWN(ld_stack_base - MD_MAX_ENVIRON, sizeof(MD_DOUBLE_TYPE));
 #endif
-  sp = ld_stack_base - MD_MAX_ENVIRON;
-  ld_stack_size = ld_stack_base - sp;
+  sp = ld_stack_base[tid] - MD_MAX_ENVIRON;
+  ld_stack_size[tid] = ld_stack_base[tid] - sp;
 
   /* initial stack pointer value */
-  ld_environ_base = sp;
+  ld_environ_base[tid] = sp;
 
   /* write [argc] to stack */
   temp = MD_SWAPQ(argc);
@@ -662,7 +665,7 @@ ld_load_prog(char *fname,		/* program to load */
 	     &null_ptr, sizeof(md_addr_t));
 
   /* did we tromp off the stop of the stack? */
-  if (sp > ld_stack_base)
+  if (sp > ld_stack_base[tid])
     {
       /* we did, indicate to the user that MD_MAX_ENVIRON must be increased,
 	 alternatively, you can use a smaller environment, or fewer
@@ -671,19 +674,19 @@ ld_load_prog(char *fname,		/* program to load */
     }
 
   /* initialize the bottom of heap to top of data segment */
-  ld_brk_point = ROUND_UP(ld_data_base + ld_data_size, MD_PAGE_SIZE);
+  ld_brk_point[tid] = ROUND_UP(ld_data_base[tid] + ld_data_size[tid], MD_PAGE_SIZE);
 
   /* set initial minimum stack pointer value to initial stack value */
-  ld_stack_min = regs->regs_R[MD_REG_SP];
+  ld_stack_min[tid] = regs->regs_R[MD_REG_SP];
 
-  regs->regs_R[MD_REG_SP] = ld_environ_base;
-  regs->regs_PC = ld_prog_entry;
+  regs->regs_R[MD_REG_SP] = ld_environ_base[tid];
+  regs->regs_PC = ld_prog_entry[tid];
 
   debug("ld_text_base: 0x%08x  ld_text_size: 0x%08x",
-	ld_text_base, ld_text_size);
+	ld_text_base[tid], ld_text_size[tid]);
   debug("ld_data_base: 0x%08x  ld_data_size: 0x%08x",
-	ld_data_base, ld_data_size);
+	ld_data_base[tid], ld_data_size[tid]);
   debug("ld_stack_base: 0x%08x  ld_stack_size: 0x%08x",
-	ld_stack_base, ld_stack_size);
-  debug("ld_prog_entry: 0x%08x", ld_prog_entry);
+	ld_stack_base[tid], ld_stack_size[tid]);
+  debug("ld_prog_entry: 0x%08x", ld_prog_entry[tid]);
 }

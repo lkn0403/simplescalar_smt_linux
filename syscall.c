@@ -1,1 +1,1 @@
-target-alpha/syscall.c
+target-alpha-linux/syscall.c

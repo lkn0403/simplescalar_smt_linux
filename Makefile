@@ -78,7 +78,7 @@
 ##	Windows NT version 4.0, Cygnus CygWin/32 beta 19
 ##
 CC = gcc
-OFLAGS = -O0 -g -Wall
+OFLAGS = -O0 -g -Wall -fcommon
 MFLAGS = `./sysprobe -flags`
 _MFLAGS = `../sysprobe -flags`
 MLIBS  = `./sysprobe -libs` -lm
@@ -279,8 +279,7 @@ CFLAGS = $(MFLAGS) $(FFLAGS) $(OFLAGS) $(BINUTILS_INC) $(BINUTILS_LIB)
 #
 # all the sources
 #
-SRCS =	main.c sim-fast.c sim-safe.c sim-cache.c sim-profile.c \
-	sim-eio.c sim-bpred.c sim-cheetah.c sim-outorder.c \
+SRCS =	main.c sim-smt.c \
 	memory.c regs.c cache.c bpred.c ptrace.c eventq.c \
 	resource.c endian.c dlite.c symbol.c eval.c options.c range.c \
 	eio.c stats.c endian.c misc.c \
@@ -307,9 +306,10 @@ OBJS =	main.$(OEXT) syscall.$(OEXT) memory.$(OEXT) regs.$(OEXT) \
 #
 # programs to build
 #
-PROGS = sim-fast$(EEXT) sim-safe$(EEXT) sim-eio$(EEXT) \
-	sim-bpred$(EEXT) sim-profile$(EEXT) \
-	sim-cache$(EEXT) sim-outorder$(EEXT) # sim-cheetah$(EEXT)
+# PROGS = sim-fast$(EEXT) sim-safe$(EEXT) sim-eio$(EEXT) \
+# 	sim-bpred$(EEXT) sim-profile$(EEXT) \
+# 	sim-cache$(EEXT) sim-outorder$(EEXT) # sim-cheetah$(EEXT)
+PROGS = sim-smt$(EEXT)
 
 #
 # all targets, NOTE: library ordering is important...
@@ -365,6 +365,18 @@ config-alpha:
 	-$(RMDIR) tests
 	$(LNDIR) tests-alpha tests
 
+config-alpha-linux:
+	-$(RM) config.h machine.h machine.c machine.def loader.c symbol.c syscall.c
+	$(LN) target-alpha-linux$(X)config.h config.h
+	$(LN) target-alpha-linux$(X)alpha.h machine.h
+	$(LN) target-alpha-linux$(X)alpha.c machine.c
+	$(LN) target-alpha-linux$(X)alpha.def machine.def
+	$(LN) target-alpha-linux$(X)loader.c loader.c
+	$(LN) target-alpha-linux$(X)symbol.c symbol.c
+	$(LN) target-alpha-linux$(X)syscall.c syscall.c
+	-$(RMDIR) tests
+	$(LNDIR) tests-alpha tests
+
 sysprobe$(EEXT):	sysprobe.c
 	$(CC) $(FFLAGS) -o sysprobe$(EEXT) sysprobe.c
 	@echo endian probe results: $(ENDIAN)
@@ -394,6 +406,9 @@ sim-cache$(EEXT):	sysprobe$(EEXT) sim-cache.$(OEXT) cache.$(OEXT) $(OBJS) libexo
 
 sim-outorder$(EEXT):	sysprobe$(EEXT) sim-outorder.$(OEXT) cache.$(OEXT) bpred.$(OEXT) resource.$(OEXT) ptrace.$(OEXT) $(OBJS) libexo/libexo.$(LEXT)
 	$(CC) -o sim-outorder$(EEXT) $(CFLAGS) sim-outorder.$(OEXT) cache.$(OEXT) bpred.$(OEXT) resource.$(OEXT) ptrace.$(OEXT) $(OBJS) libexo/libexo.$(LEXT) $(MLIBS)
+
+sim-smt$(EEXT):	sysprobe$(EEXT) sim-smt.$(OEXT) cache.$(OEXT) bpred.$(OEXT) resource.$(OEXT) ptrace.$(OEXT) $(OBJS) libexo/libexo.$(LEXT)
+	$(CC) -o sim-smt$(EEXT) $(CFLAGS) sim-smt.$(OEXT) cache.$(OEXT) bpred.$(OEXT) resource.$(OEXT) ptrace.$(OEXT) $(OBJS) libexo/libexo.$(LEXT) $(MLIBS)
 
 exo libexo/libexo.$(LEXT): sysprobe$(EEXT)
 	cd libexo $(CS) \

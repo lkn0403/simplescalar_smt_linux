@@ -1,1 +1,1 @@
-target-alpha/alpha.h
+target-alpha-linux/alpha.h

@@ -1,1 +1,1 @@
-target-alpha/symbol.c
+target-alpha-linux/symbol.c

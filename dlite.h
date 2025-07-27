@@ -121,7 +121,8 @@
 /* DLite register access function, the debugger uses this function to access
    simulator register state */
 typedef char *					/* error str, NULL if none */
-(*dlite_reg_obj_t)(struct regs_t *regs,		/* registers to access */
+(*dlite_reg_obj_t)(int tid,
+			struct regs_t *regs,		/* registers to access */
 		   int is_write,		/* access type */
 		   enum md_reg_type rt,		/* reg bank to access */
 		   int reg,			/* register number */
@@ -130,7 +131,8 @@ typedef char *					/* error str, NULL if none */
 /* DLite memory access function, the debugger uses this function to access
    simulator memory state */
 typedef char *					/* error str, NULL if none */
-(*dlite_mem_obj_t)(struct mem_t *mem,		/* memory space to access */
+(*dlite_mem_obj_t)(int tid,
+		   struct mem_t *mem,		/* memory space to access */
 		   int is_write,		/* access type */
 		   md_addr_t addr,		/* address to access */
 		   char *p,			/* input/output buffer */
@@ -146,7 +148,8 @@ typedef char *					/* error str, NULL if none */
 
 /* initialize the DLite debugger */
 void
-dlite_init(dlite_reg_obj_t reg_obj,		/* register state object */
+dlite_init( int tid, 
+       dlite_reg_obj_t reg_obj,		/* register state object */
 	   dlite_mem_obj_t mem_obj,		/* memory state object */
 	   dlite_mstate_obj_t mstate_obj);	/* machine state object */
 

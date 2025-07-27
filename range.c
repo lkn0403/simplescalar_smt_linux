@@ -60,6 +60,9 @@
 #include "symbol.h"
 #include "loader.h"
 #include "range.h"
+#include "dlite.h"
+
+extern unsigned int current_dlite_tid;
 
 /* parse execution position *PSTR to *POS */
 char *						/* error string, or NULL */
@@ -109,8 +112,8 @@ range_parse_pos(char *pstr,			/* execution position string */
     }
 
   /* else, attempt symbol lookup */
-  sym_loadsyms(ld_prog_fname, /* !locals */FALSE);
-  sym = sym_bind_name(s, NULL, sdb_any);
+  sym_loadsyms(current_dlite_tid, ld_prog_fname[current_dlite_tid], /* !locals */FALSE);
+  sym = sym_bind_name(current_dlite_tid, s, NULL, sdb_any);
   if (sym != NULL)
     {
       pos->pos = (counter_t)sym->addr;

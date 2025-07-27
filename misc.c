@@ -67,6 +67,8 @@
 /* verbose output flag */
 int verbose = FALSE;
 
+int program_complete = 0;
+
 #ifdef DEBUG
 /* active debug flag */
 int debugging = FALSE;

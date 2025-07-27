@@ -1136,6 +1136,12 @@ __opt_process_options(struct opt_odb_t *odb,	/* option data base */
 	  /* done processing command line */
 	  goto done_processing;
 	}
+      /* or got --, where filename to run will appear next? */
+      if (!strcmp(argv[index], "--"))
+    {
+      index++;
+      goto done_processing;
+    }
       /* when finished, argv[index] is an option to parse */
 
       /* process builtin options */

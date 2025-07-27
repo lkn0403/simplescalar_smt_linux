@@ -73,14 +73,14 @@ void eio_close(FILE *fd);
 /* check point current architected state to stream FD, returns
    EIO transaction count (an EIO file pointer) */
 counter_t
-eio_write_chkpt(struct regs_t *regs,		/* regs to dump */
+eio_write_chkpt(int tid, struct regs_t *regs,		/* regs to dump */
 		struct mem_t *mem,		/* memory to dump */
 		FILE *fd);			/* stream to write to */
 
 /* read check point of architected state from stream FD, returns
    EIO transaction count (an EIO file pointer) */
 counter_t
-eio_read_chkpt(struct regs_t *regs,		/* regs to dump */
+eio_read_chkpt(int tid, struct regs_t *regs,		/* regs to dump */
 		struct mem_t *mem,		/* memory to dump */
 		FILE *fd);			/* stream to read */
 
@@ -88,7 +88,7 @@ eio_read_chkpt(struct regs_t *regs,		/* regs to dump */
    and memory are assumed to be precise when this function is called,
    register and memory are updated with the results of the sustem call */
 void
-eio_write_trace(FILE *eio_fd,			/* EIO stream file desc */
+eio_write_trace(int tid, FILE *eio_fd,			/* EIO stream file desc */
 		counter_t icnt,			/* instruction count */
 		struct regs_t *regs,		/* registers to update */
 		mem_access_fn mem_fn,		/* generic memory accessor */
@@ -99,7 +99,7 @@ eio_write_trace(FILE *eio_fd,			/* EIO stream file desc */
    and memory are assumed to be precise when this function is called,
    register and memory are updated with the results of the sustem call */
 void
-eio_read_trace(FILE *eio_fd,			/* EIO stream file desc */
+eio_read_trace(int tid, FILE *eio_fd,			/* EIO stream file desc */
 	       counter_t icnt,			/* instruction count */
 	       struct regs_t *regs,		/* registers to update */
 	       mem_access_fn mem_fn,		/* generic memory accessor */
@@ -107,6 +107,6 @@ eio_read_trace(FILE *eio_fd,			/* EIO stream file desc */
 	       md_inst_t inst);			/* system call inst */
 
 /* fast forward EIO trace EIO_FD to the transaction just after ICNT */
-void eio_fast_forward(FILE *eio_fd, counter_t icnt);
+void eio_fast_forward(int tid, FILE *eio_fd, counter_t icnt);
 
 #endif /* EIO_H */

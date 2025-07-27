@@ -88,6 +88,8 @@
 /* verbose output flag */
 extern int verbose;
 
+extern int program_complete;
+
 #ifdef DEBUG
 /* active debug flag */
 extern int debugging;
@@ -253,5 +255,12 @@ void gzclose(FILE *fd);
 
 /* update the CRC on the data block one byte at a time */
 word_t crc(word_t crc_accum, word_t data);
+
+typedef struct
+{
+  unsigned long int brk_point; // break point defines the end of the data segment
+  unsigned long int mmap_end;  // end of mmap range, used to fake mmap
+
+} AlphaSystemState;
 
 #endif /* MISC_H */

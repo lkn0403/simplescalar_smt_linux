@@ -54,6 +54,7 @@
 
 #include <stdio.h>
 
+#include "sim.h"
 #include "host.h"
 #include "misc.h"
 #include "machine.h"
@@ -76,32 +77,32 @@ struct sym_sym_t {
 };
 
 /* symbol database in no particular order */
-extern struct sym_sym_t *sym_db;
+extern struct sym_sym_t *sym_db[MAX_THREAD];
 
 /* all symbol sorted by address */
-extern int sym_nsyms;
-extern struct sym_sym_t **sym_syms;
+extern int sym_nsyms[MAX_THREAD];
+extern struct sym_sym_t **sym_syms[MAX_THREAD];
 
 /* all symbols sorted by name */
-extern struct sym_sym_t **sym_syms_by_name;
+extern struct sym_sym_t **sym_syms_by_name[MAX_THREAD];
 
 /* text symbols sorted by address */
-extern int sym_ntextsyms;
-extern struct sym_sym_t **sym_textsyms;
+extern int sym_ntextsyms[MAX_THREAD];
+extern struct sym_sym_t **sym_textsyms[MAX_THREAD];
 
 /* text symbols sorted by name */
-extern struct sym_sym_t **sym_textsyms_by_name;
+extern struct sym_sym_t **sym_textsyms_by_name[MAX_THREAD];
 
 /* data symbols sorted by address */
-extern int sym_ndatasyms;
-extern struct sym_sym_t **sym_datasyms;
+extern int sym_ndatasyms[MAX_THREAD];
+extern struct sym_sym_t **sym_datasyms[MAX_THREAD];
 
 /* data symbols sorted by name */
-extern struct sym_sym_t **sym_datasyms_by_name;
+extern struct sym_sym_t **sym_datasyms_by_name[MAX_THREAD];
 
 /* load symbols out of FNAME */
 void
-sym_loadsyms(char *fname,		/* file name containing symbols */
+sym_loadsyms(int tid, char *fname,		/* file name containing symbols */
 	     int load_locals);		/* load local symbols */
 
 /* dump symbol SYM to output stream FD */
@@ -111,11 +112,11 @@ sym_dumpsym(struct sym_sym_t *sym,	/* symbol to display */
 
 /* dump all symbols to output stream FD */
 void
-sym_dumpsyms(FILE *fd);			/* output stream */
+sym_dumpsyms(int tid, FILE *fd);			/* output stream */
 
 /* dump all symbol state to output stream FD */
 void
-sym_dumpstate(FILE *fd);		/* output stream */
+sym_dumpstate(int tid, FILE *fd);		/* output stream */
 
 /* symbol databases available */
 enum sym_db_t {
@@ -130,7 +131,7 @@ enum sym_db_t {
    requested symbol database is returned in *PINDEX if the pointer is
    non-NULL */
 struct sym_sym_t *			/* symbol found, or NULL */
-sym_bind_addr(md_addr_t addr,		/* address of symbol to locate */
+sym_bind_addr(int tid, md_addr_t addr,		/* address of symbol to locate */
 	      int *pindex,		/* ptr to index result var */
 	      int exact,		/* require exact address match? */
 	      enum sym_db_t db);	/* symbol database to search */
@@ -139,7 +140,7 @@ sym_bind_addr(md_addr_t addr,		/* address of symbol to locate */
    in the requested symbol database is returned in *PINDEX if the pointer is
    non-NULL */
 struct sym_sym_t *				/* symbol found, or NULL */
-sym_bind_name(char *name,			/* symbol name to locate */
+sym_bind_name(int tid, char *name,			/* symbol name to locate */
 	      int *pindex,			/* ptr to index result var */
 	      enum sym_db_t db);		/* symbol database to search */
 

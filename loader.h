@@ -55,6 +55,7 @@
 #include <stdio.h>
 
 #include "host.h"
+#include "sim.h"
 #include "misc.h"
 #include "machine.h"
 #include "regs.h"
@@ -98,49 +99,53 @@
  */
 
 /* program text (code) segment base */
-extern md_addr_t ld_text_base;
+
+extern AlphaSystemState _system[MAX_THREAD];
+
+extern md_addr_t ld_text_base[MAX_THREAD];
 
 /* program text (code) size in bytes */
-extern unsigned int ld_text_size;
+extern unsigned int ld_text_size[MAX_THREAD];
 
 /* program initialized data segment base */
-extern md_addr_t ld_data_base;
+extern md_addr_t ld_data_base[MAX_THREAD];
 
 /* program initialized ".data" and uninitialized ".bss" size in bytes */
-extern unsigned int ld_data_size;
+extern unsigned int ld_data_size[MAX_THREAD];
 
 /* top of the data segment */
-extern md_addr_t ld_brk_point;
+extern md_addr_t ld_brk_point[MAX_THREAD];
 
 /* program stack segment base (highest address in stack) */
-extern md_addr_t ld_stack_base;
+extern md_addr_t ld_stack_base[MAX_THREAD];
 
 /* program initial stack size */
-extern unsigned int ld_stack_size;
+extern unsigned int ld_stack_size[MAX_THREAD];
 
 /* lowest address accessed on the stack */
-extern md_addr_t ld_stack_min;
+extern md_addr_t ld_stack_min[MAX_THREAD];
 
 /* program file name */
-extern char *ld_prog_fname;
+extern char *ld_prog_fname[MAX_THREAD];
 
 /* program entry point (initial PC) */
-extern md_addr_t ld_prog_entry;
+extern md_addr_t ld_prog_entry[MAX_THREAD];
 
 /* program environment base address address */
-extern md_addr_t ld_environ_base;
+extern md_addr_t ld_environ_base[MAX_THREAD];
 
 /* target executable endian-ness, non-zero if big endian */
 extern int ld_target_big_endian;
 
 /* register simulator-specific statistics */
 void
-ld_reg_stats(struct stat_sdb_t *sdb);	/* stats data base */
+ld_reg_stats(int tid, struct stat_sdb_t *sdb);	/* stats data base */
 
 /* load program text and initialized data into simulated virtual memory
    space and initialize program segment range variables */
 void
-ld_load_prog(char *fname,		/* program to load */
+ld_load_prog(int tid,
+		 char *fname,		/* program to load */
 	     int argc, char **argv,	/* simulated program cmd line args */
 	     char **envp,		/* simulated program environment */
 	     struct regs_t *regs,	/* registers to initialize for load */
