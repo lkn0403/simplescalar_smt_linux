@@ -1034,18 +1034,11 @@ sys_syscall(int tid,
 	  {
 	    /* perform program output request */
 
-	    do {
-			if (output_buf_pos[tid] + regs->regs_R[MD_REG_A2] < OUTPUT_BUFFER_SIZE) {
+
+	do {
 	      /*nwritten*/regs->regs_R[MD_REG_V0] =
-			(qword_t) memcpy(&output_buffer[tid][output_buf_pos[tid]], buf, regs->regs_R[MD_REG_A2]);
-			output_buf_pos[tid] += regs->regs_R[MD_REG_A2];
-	        // write(/*fd*/regs->regs_R[MD_REG_A0],
-		    //   buf, /*nbytes*/regs->regs_R[MD_REG_A2]);
-			} else {
-				regs->regs_R[MD_REG_V0] = -1;
-				regs->regs_R[MD_REG_A3] = -1;
-				break;
-			}
+	        write(/*fd*/regs->regs_R[MD_REG_A0],
+		      buf, /*nbytes*/regs->regs_R[MD_REG_A2]);
 	    } while (/*nwritten*/regs->regs_R[MD_REG_V0] == -1
 		     && errno == EAGAIN);
 	  }
