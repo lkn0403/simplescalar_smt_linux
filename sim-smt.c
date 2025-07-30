@@ -3121,6 +3121,35 @@ struct fetch_rec {
   unsigned int ptrace_seq;		/* print trace sequence id */
   struct fetch_rec *prev, *next;
 };
+
+
+#define MAX_FETCH_ENTRIES 1024
+static struct fetch_rec *fetch_free_list = NULL;
+
+void fetch_pool_init() {
+    for (int i = 0; i < MAX_RUU_ENTRIES; i++) {
+        struct fetch_rec *fd = malloc(sizeof(struct fetch_rec));
+        fd->next = fetch_free_list;
+        fetch_free_list = fd;
+    }
+}
+
+struct fetch_rec *fetch_alloc() {
+    if (!fetch_free_list)
+        panic("RUU pool exhausted!");
+
+    struct fetch_rec *fd = fetch_free_list;
+    fetch_free_list = fd->next;
+    memset(fd, 0, sizeof(struct fetch_rec));
+    return fd;
+}
+
+void fetch_free(struct fetch_rec *fd) {
+    memset(fd, 0, sizeof(struct fetch_rec));
+    fd->next = fetch_free_list;
+    fetch_free_list = fd;
+}
+
 static struct fetch_rec *fetch_data, *fetch_tail;	/* IFETCH -> DISPATCH inst queue */
 static int fetch_num;			/* num entries in IF -> DIS queue */
 
@@ -3148,7 +3177,7 @@ void fetch_pop_head() {
   else
     fetch_tail = NULL;
 
-  free(flush_fetch);
+  fetch_free(flush_fetch);
   fetch_num--;
 }
 
@@ -3166,7 +3195,7 @@ void fetch_flush(int tid) {
       else
         fetch_tail = tail->prev;
 
-      free(tail);
+      fetch_free(tail);
       tail = next_flush;
       total_icount[tid]--;
       fetch_num--;
@@ -3982,7 +4011,7 @@ ruu_dispatch(void)
         break;
       }
       struct fetch_rec *fetch_data_ptr = fetch_data;
-
+      (void **) &fetch_data;
       /* get the next instruction from the IFETCH -> DISPATCH queue */
       inst = fetch_data_ptr->IR;
       tid = fetch_data_ptr->tid;
@@ -4386,6 +4415,7 @@ fetch_init(void)
 {
   fetch_num = 0;
   fetch_data = fetch_tail = NULL;
+  fetch_pool_init();
   
   IFQ_count = 0;
   IFQ_fcount = 0;
@@ -4432,13 +4462,14 @@ static int last_inst_tmissed = FALSE;
 static void
 fetch_choice(void)
 {
-  fetch_thread = 0;
-  unsigned int min_icount = total_icount[0];
-  for (int tid = 1; tid < thread_num; tid++) {
-    if (total_icount[tid] < min_icount) {
-      fetch_thread = tid; min_icount = total_icount[tid];
-    }
-  }
+  // fetch_thread = 0;
+  // unsigned int min_icount = total_icount[0];
+  // for (int tid = 1; tid < thread_num; tid++) {
+  //   if (total_icount[tid] < min_icount) {
+  //     fetch_thread = tid; min_icount = total_icount[tid];
+  //   }
+  // }
+  fetch_thread = (fetch_thread + 1) % thread_num;
 }
 
 /* fetch up as many instruction as one branch prediction and one cache line
@@ -4518,7 +4549,7 @@ ruu_fetch(void)
 
       /* have a valid inst, here */
 
-	  struct fetch_rec *fetch_data_ptr = calloc(1, sizeof(struct fetch_rec));
+	  struct fetch_rec *fetch_data_ptr = fetch_alloc();
       /* possibly use the BTB target */
       if (pred)
 	{
