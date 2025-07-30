@@ -592,7 +592,7 @@ void
 sim_reg_options(struct opt_odb_t *odb)
 {
   opt_reg_header(odb, 
-"sim-outorder: This simulator implements a very detailed out-of-order issue\n"
+"sim-smt: This simulator implements a very detailed out-of-order issue\n"
 "superscalar processor with a two-level memory system and speculative\n"
 "execution support.  This simulator is a performance simulator, tracking the\n"
 "latency of all pipeline operations.\n"
@@ -1329,7 +1329,6 @@ sim_reg_stats(int thread_num, struct stat_sdb_t *sdb)   /* stats database */
 
   /* register predictor stats */
   
-  for (int tid = 0; tid < thread_num; tid++)
   if (pred)
     bpred_reg_stats(pred, sdb);
 
@@ -3037,7 +3036,7 @@ static md_fpr_t spec_regs_F[MAX_THREAD];
 
 /* miscellaneous registers */
 #define C_BMAP_SZ       (BITMAP_SIZE(MD_NUM_CREGS))
-static BITMAP_TYPE(MD_NUM_FREGS, use_spec_C[MAX_THREAD]);
+static BITMAP_TYPE(MD_NUM_CREGS, use_spec_C[MAX_THREAD]);
 static md_ctrl_t spec_regs_C[MAX_THREAD];
 
 /* dump speculative register state */
