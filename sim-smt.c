@@ -403,8 +403,8 @@ static int fetch_thread;
 static unsigned int total_icount[MAX_THREAD];
 int thread_end[MAX_THREAD] = {};
 
-// char output_buffer[MAX_THREAD][OUTPUT_BUFFER_SIZE];
-// size_t output_buf_pos[MAX_THREAD] = {};
+char output_buffer[MAX_THREAD][OUTPUT_BUFFER_SIZE];
+size_t output_buf_pos[MAX_THREAD] = {};
 
 char threadname[MAX_THREAD][100];
 
@@ -1578,7 +1578,36 @@ struct RUU_station {
      operands are known to be read (see lsq_refresh() for details on
      enforcing memory dependencies) */
   int idep_ready[MAX_IDEPS];		/* input operand ready? */
+  struct RUU_station *prev;
+  struct RUU_station *next;
 };
+
+#define MAX_RUU_ENTRIES 1024
+static struct RUU_station *ruu_free_list = NULL;
+
+void ruu_pool_init() {
+    for (int i = 0; i < MAX_RUU_ENTRIES; i++) {
+        struct RUU_station *rs = malloc(sizeof(struct RUU_station));
+        rs->next = ruu_free_list;
+        ruu_free_list = rs;
+    }
+}
+
+struct RUU_station *ruu_alloc() {
+    if (!ruu_free_list)
+        panic("RUU pool exhausted!");
+
+    struct RUU_station *rs = ruu_free_list;
+    ruu_free_list = rs->next;
+    memset(rs, 0, sizeof(struct RUU_station));
+    return rs;
+}
+
+void ruu_free(struct RUU_station *rs) {
+    memset(rs, 0, sizeof(struct RUU_station));
+    rs->next = ruu_free_list;
+    ruu_free_list = rs;
+}
 
 /* non-zero if all register operands are ready, update with MAX_IDEPS */
 #define OPERANDS_READY(RS)                                              \
@@ -1586,15 +1615,11 @@ struct RUU_station {
 
 /* register update unit, combination of reservation stations and reorder
    buffer device, organized as a circular queue */
-struct RUU_queue {
-  struct RUU_station *node; 
-  struct RUU_queue *next; 
-  struct RUU_queue *prev; 
-};
-static int RUU_num;			/* num entries currently in RUU */
-struct RUU_queue *RUU, *RUU_tail;		/* RUU head and tail pointers */
 
-void RUU_push_tail(struct RUU_queue *node) {
+static int RUU_num;			/* num entries currently in RUU */
+struct RUU_station *RUU, *RUU_tail;		/* RUU head and tail pointers */
+
+void RUU_push_tail(struct RUU_station *node) {
   node->next = NULL;
   if (RUU_tail) {
     RUU_tail->next = node;
@@ -1610,19 +1635,18 @@ void RUU_push_tail(struct RUU_queue *node) {
 void RUU_pop_head() {
   if (!RUU)
     panic("empty LSQ");
-  struct RUU_queue *flush_ruu = RUU;
+  struct RUU_station *flush_ruu = RUU;
   RUU = RUU->next;
 
   if (RUU)
     RUU->prev = NULL;
   else
     RUU_tail = NULL;
-  free(flush_ruu->node);
-  free(flush_ruu);
+  ruu_free(flush_ruu);
   RUU_num--;
 }
 
-void RUU_delete(struct RUU_queue *delq) {
+void RUU_delete(struct RUU_station *delq) {
   if (delq->prev)
     delq->prev->next = delq->next;
   else
@@ -1632,10 +1656,7 @@ void RUU_delete(struct RUU_queue *delq) {
     delq->next->prev = delq->prev;
   else
     RUU_tail = delq->prev;
-
-  if (delq->node)
-    free(delq->node);
-  free(delq);
+  ruu_free(delq);
   RUU_num--;
 }
 
@@ -1643,15 +1664,10 @@ void RUU_delete(struct RUU_queue *delq) {
 static void
 ruu_init(void)
 {
-    // RUU = calloc(RUU_size, sizeof(struct RUU_queue));
-    // if (!RUU[tid])
-    //   fatal("out of virtual memory");
-
-    // RUU_num[tid] = 0;
-    // RUU_head[tid] = RUU_tail[tid] = 0;
-  
-  RUU_num = 0;
+  ruu_pool_init();
   RUU = RUU_tail = NULL;
+  RUU_num = 0;
+
   RUU_count = 0;
   RUU_fcount = 0;
 }
@@ -1667,8 +1683,8 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
     stream = stderr;
 
   if (header)
-    fprintf(stream, "idx: %2d: opcode: %s, inst: `",
-	    index, MD_OP_NAME(rs->op));
+    fprintf(stream, "idx: %2d: opcode: %s, tid: %d, inst: `",
+	    index, MD_OP_NAME(rs->op), rs->tid);
   else
     fprintf(stream, "       opcode: %s, inst: `",
 	    MD_OP_NAME(rs->op));
@@ -1696,28 +1712,17 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 static void
 ruu_dump(FILE *stream)				/* output stream */
 {
-  // int num, head;
-  // struct RUU_station *rs;
-
   if (!stream)
     stream = stderr;
 
-
   fprintf(stream, "** RUU state **\n");
-  // fprintf(stream, "RUU_head: %d, RUU_tail: %d\n", RUU, RUU_tail);
+  fprintf(stream, "RUU_head: %p, RUU_tail: %p\n", RUU, RUU_tail);
   fprintf(stream, "RUU_num: %d\n", RUU_num);
 
-  // num = RUU_num[tid];
-  // head = RUU_head[tid];
-  // struct RUU_queue *i = RUU;
-  // while (i) {
-  //   rs = &RUU[tid][head];
-  //   ruu_dumpent(rs, rs - RUU[tid], stream, /* header */TRUE);
-  //   head = (head + 1) % RUU_size;
-  //   num--;
-  // }
-  fprintf(stream, "\n");
-
+  struct RUU_station *ruu_head = RUU;
+  for (int i = 0; ruu_head; i++, ruu_head = ruu_head->next) {
+    ruu_dumpent(ruu_head, i, stream, TRUE);
+  }
 }
 
 /*
@@ -1748,11 +1753,10 @@ ruu_dump(FILE *stream)				/* output stream */
  *   cycle the store executes (using a bypass network), thus stores complete
  *   in effective zero time after their effective address is known
  */
-
-struct RUU_queue *LSQ, *LSQ_tail;          /* LSQ head and tail pointers */
-
+static struct RUU_station *LSQ, *LSQ_tail;         /* load/store queue */
 static int LSQ_num;                     /* num entries currently in LSQ */
-void LSQ_push_tail(struct RUU_queue *node) {
+
+void LSQ_push_tail(struct RUU_station *node) {
   node->next = NULL;
   if (LSQ_tail) {
     LSQ_tail->next = node;
@@ -1768,19 +1772,18 @@ void LSQ_push_tail(struct RUU_queue *node) {
 void LSQ_pop_head() {
   if (!LSQ)
     panic("empty LSQ");
-  struct RUU_queue *flush_lsq = LSQ;
+  struct RUU_station *flush_ruu = LSQ;
   LSQ = LSQ->next;
 
   if (LSQ)
     LSQ->prev = NULL;
   else
     LSQ_tail = NULL;
-  free(flush_lsq->node);
-  free(flush_lsq);
+  ruu_free(flush_ruu);
   LSQ_num--;
 }
 
-void LSQ_delete(struct RUU_queue *delq) {
+void LSQ_delete(struct RUU_station *delq) {
   if (delq->prev)
     delq->prev->next = delq->next;
   else
@@ -1791,9 +1794,7 @@ void LSQ_delete(struct RUU_queue *delq) {
   else
     LSQ_tail = delq->prev;
 
-  if (delq->node)
-    free(delq->node);
-  free(delq);
+  ruu_free(delq);
   LSQ_num--;
 }
 
@@ -1812,16 +1813,10 @@ void LSQ_delete(struct RUU_queue *delq) {
 static void
 lsq_init(void)
 {
-    // for (int tid = 0; tid < thread_num; tid++) {
-    //   LSQ[tid] = calloc(LSQ_size, sizeof(struct RUU_station));
-    //   if (!LSQ[tid])
-    //     fatal("out of virtual memory");
 
-    //   LSQ_num[tid] = 0;
-    //   LSQ_head[tid] = LSQ_tail[tid] = 0;
-    // }
-  LSQ_num = 0;
   LSQ = LSQ_tail = NULL;
+  LSQ_num = 0;
+
   LSQ_count = 0;
   LSQ_fcount = 0;
 }
@@ -1830,26 +1825,16 @@ lsq_init(void)
 static void
 lsq_dump(FILE *stream)				/* output stream */
 {
-  // int num, head;
-  // struct RUU_station *rs;
-
   if (!stream)
     stream = stderr;
-
   fprintf(stream, "** LSQ state **\n");
-  // fprintf(stream, "LSQ_head: %d, LSQ_tail: %d\n", LSQ, LSQ_tail);
+  fprintf(stream, "LSQ_head: %p, LSQ_tail: %p\n", LSQ, LSQ_tail);
   fprintf(stream, "LSQ_num: %d\n", LSQ_num);
 
-    // num = LSQ_num[tid];
-    // head = LSQ_head[tid];
-    // while (num)
-    //   {
-    //     rs = &LSQ[tid][head];
-    //     ruu_dumpent(rs, rs - LSQ[tid], stream, /* header */TRUE);
-    //     head = (head + 1) % LSQ_size;
-    //     num--;
-    //   }
-
+  struct RUU_station *lsq_head = LSQ;
+  for (int i = 0; lsq_head; i++, lsq_head = lsq_head->next) {
+    ruu_dumpent(lsq_head, i, stream, TRUE);
+  }
 
 }
 
@@ -1868,7 +1853,7 @@ lsq_dump(FILE *stream)				/* output stream */
    performance of (all to frequent) squash events */
 struct RS_link {
   struct RS_link *next;			/* next entry in list */
-  struct RUU_queue *rq;		/* referenced RUU resv station */
+  struct RUU_station *rs;		/* referenced RUU resv station */
   INST_TAG_TYPE tag;			/* inst instance sequence number */
   union {
     tick_t when;			/* time stamp of entry (for eventq) */
@@ -1885,34 +1870,34 @@ static struct RS_link *rslink_free_list;
 static struct RS_link RSLINK_NULL = RSLINK_NULL_DATA;
 
 /* create and initialize an RS link */
-#define RSLINK_INIT(RSL, RQ)						\
-  ((RSL).next = NULL, (RSL).rq = (RQ), (RSL).tag = (RQ)->node->tag)
+#define RSLINK_INIT(RSL, RS)						\
+  ((RSL).next = NULL, (RSL).rs = (RS), (RSL).tag = (RS)->tag)
 
 /* non-zero if RS link is NULL */
-#define RSLINK_IS_NULL(LINK)            ((LINK)->rq == NULL)
+#define RSLINK_IS_NULL(LINK)            ((LINK)->rs == NULL)
 
 /* non-zero if RS link is to a valid (non-squashed) entry */
-#define RSLINK_VALID(LINK)              ((LINK)->rq && (LINK)->tag == (LINK)->rq->node->tag)
+#define RSLINK_VALID(LINK)              ((LINK)->rs && (LINK)->tag == (LINK)->rs->tag)
 
 /* extra RUU reservation station pointer */
-#define RSLINK_RS(LINK)                 ((LINK)->rq)
+#define RSLINK_RS(LINK)                 ((LINK)->rs)
 
 /* get a new RS link record */
-#define RSLINK_NEW(DST, RQ)						\
+#define RSLINK_NEW(DST, RS)						\
   { struct RS_link *n_link;						\
     if (!rslink_free_list)						\
       panic("out of rs links");						\
     n_link = rslink_free_list;						\
     rslink_free_list = rslink_free_list->next;				\
     n_link->next = NULL;						\
-    n_link->rq = (RQ); n_link->tag = n_link->rq->node->tag;			\
+    n_link->rs = (RS); n_link->tag = n_link->rs->tag;			\
     (DST) = n_link;							\
   }
 
 /* free an RS link record */
 #define RSLINK_FREE(LINK)						\
   {  struct RS_link *f_link = (LINK);					\
-     f_link->rq = NULL; f_link->tag = 0;				\
+     f_link->rs = NULL; f_link->tag = 0;				\
      f_link->next = rslink_free_list;					\
      rslink_free_list = f_link;						\
   }
@@ -1993,37 +1978,33 @@ eventq_dump(FILE *stream)			/* output stream */
     stream = stderr;
 
   fprintf(stream, "** event queue state **\n");
-
-  for (ev = event_queue; ev != NULL; ev = ev->next)
-    {
-      /* is event still valid? */
-  //     if (RSLINK_VALID(ev))
-	// {
-	//   struct RUU_station *rs = RSLINK_RS(ev);
-  //   int tid = rs->tid;
-	//   fprintf(stream, "idx: %2d: @ %.0f\n",
-	// 	  (int)(rs - (rs->in_LSQ ? LSQ[tid] : RUU[tid])), (double)ev->x.when);
-	//   ruu_dumpent(rs, rs - (rs->in_LSQ ? LSQ[tid] : RUU[tid]),
-	// 	      stream, /* !header */FALSE);
-	// }
+  int i = 0;
+  for (ev = event_queue; ev != NULL; ev = ev->next, i++) {
+    /* is event still valid? */
+    if (RSLINK_VALID(ev)) {
+      struct RUU_station *rs = RSLINK_RS(ev);
+      fprintf(stream, "idx: %2d: @ %.0f\n", i, (double)ev->x.when);
+      ruu_dumpent(rs, i, stream, /* !header */FALSE);
     }
+  }
 }
 
 /* insert an event for RS into the event queue, event queue is sorted from
    earliest to latest event, event and associated side-effects will be
    apparent at the start of cycle WHEN */
 static void
-eventq_queue_event(struct RUU_queue *rq, tick_t when)
+eventq_queue_event(struct RUU_station *rs, tick_t when)
 {
   struct RS_link *prev, *ev, *new_ev;
-  if (rq->node->completed)
+
+  if (rs->completed)
     panic("event completed");
 
   if (when <= sim_cycle)
     panic("event occurred in the past");
 
   /* get a free event record */
-  RSLINK_NEW(new_ev, rq);
+  RSLINK_NEW(new_ev, rs);
   new_ev->x.when = when;
 
   /* locate insertion point */
@@ -2047,7 +2028,7 @@ eventq_queue_event(struct RUU_queue *rq, tick_t when)
 
 /* return the next event that has already occurred, returns NULL when no
    remaining events or all remaining events are in the future */
-static struct RUU_queue *
+static struct RUU_station *
 eventq_next_event(void)
 {
   struct RS_link *ev;
@@ -2061,13 +2042,13 @@ eventq_next_event(void)
       /* event still valid? */
       if (RSLINK_VALID(ev))
 	{
-	  struct RUU_queue *rq = RSLINK_RS(ev);
+	  struct RUU_station *rs = RSLINK_RS(ev);
 
 	  /* reclaim event record */
 	  RSLINK_FREE(ev);
 
 	  /* event is valid, return resv station */
-	  return rq;
+	  return rs;
 	}
       else
 	{
@@ -2118,19 +2099,14 @@ readyq_dump(FILE *stream)			/* output stream */
     stream = stderr;
 
   fprintf(stream, "** ready queue state **\n");
-
-  for (link = ready_queue; link != NULL; link = link->next)
-    {
-      /* is entry still valid? */
-  //     if (RSLINK_VALID(link))
-	// {
-	//   struct RUU_station *rs = RSLINK_RS(link);
-  //   int tid = rs->tid;
-
-	//   ruu_dumpent(rs, rs - (rs->in_LSQ ? LSQ[tid] : RUU[tid]),
-	// 	      stream, /* header */TRUE);
-	// }
-    }
+  int i = 0;
+  for (link = ready_queue; link != NULL; link = link->next, i++) {
+    /* is entry still valid? */
+    if (RSLINK_VALID(link)) {
+	  struct RUU_station *rs = RSLINK_RS(link);
+	  ruu_dumpent(rs, i, stream, /* header */TRUE);
+	  }
+  }
 }
 
 /* insert ready node into the ready list using ready instruction scheduling
@@ -2147,17 +2123,17 @@ readyq_dump(FILE *stream)			/* output stream */
   instructions (such loads and multiplies) get priority since they are very
   likely on the program's critical path */
 static void
-readyq_enqueue(struct RUU_queue *rq)		/* RS to enqueue */
+readyq_enqueue(struct RUU_station *rs)		/* RS to enqueue */
 {
   struct RS_link *prev, *node, *new_node;
-  struct RUU_station *rs = rq->node;
+
   /* node is now queued */
   if (rs->queued)
     panic("node is already queued");
   rs->queued = TRUE;
 
   /* get a free ready list node */
-  RSLINK_NEW(new_node, rq);
+  RSLINK_NEW(new_node, rs);
   new_node->x.seq = rs->seq;
 
   /* locate insertion point */
@@ -2266,7 +2242,7 @@ static void
 cv_dump(int tid, FILE *stream)				/* output stream */
 {
   int i;
-  // struct CV_link ent;
+  struct CV_link ent;
 
   if (!stream)
     stream = stderr;
@@ -2275,13 +2251,12 @@ cv_dump(int tid, FILE *stream)				/* output stream */
 
   for (i=0; i < MD_TOTAL_REGS; i++)
     {
-  //     ent = CREATE_VECTOR(tid, i);
-  //     if (!ent.rs)
-	// fprintf(stream, "[cv%02d]: from architected reg file\n", i);
-  //     else
-	// fprintf(stream, "[cv%02d]: from %s, idx: %d\n",
-	// 	i, (ent.rs->in_LSQ ? "LSQ" : "RUU"),
-	// 	(int)(ent.rs - (ent.rs->in_LSQ ? LSQ[tid] : RUU[tid])));
+      ent = CREATE_VECTOR(tid, i);
+      if (!ent.rs)
+	fprintf(stream, "[cv%02d]: from architected reg file\n", i);
+      else
+	fprintf(stream, "[cv%02d]: from %s\n",
+		i, (ent.rs->in_LSQ ? "LSQ" : "RUU"));
     }
 }
 
@@ -2304,28 +2279,28 @@ ruu_commit(void)
   int commit_stop[MAX_THREAD];
   for (int i = 0; i < thread_num; i++) commit_stop[i] = 0;
 
-  struct RUU_queue *ruu_head, *ruu_temp = RUU;
-  struct RUU_queue *lsq_head, *lsq_temp = LSQ;
-  struct RUU_station *RUU_ptr;
-  struct RUU_station *LSQ_ptr;
+
+  struct RUU_station *ruu_head, *ruu_temp = RUU;
+  struct RUU_station *lsq_head, *lsq_temp = LSQ;
   /* all values must be retired to the architected reg file in program order */
   while (RUU_num > 0 && committed < ruu_commit_width) {
     ruu_head = ruu_temp;
     lsq_head = lsq_temp;
     if (n_commit_stop == thread_num) break;
     if (!ruu_head) break;
-    RUU_ptr = ruu_head->node;
-    int tid = RUU_ptr->tid;
+    int tid = ruu_head->tid;
     if (commit_stop[tid]) {
       ruu_temp = ruu_head -> next;
+      if (ruu_head->ea_comp)
+        lsq_temp = lsq_head -> next;
       continue;
     }
 
-    if (!RUU_ptr->completed) {
+    if (!ruu_head->completed) {
       /* at least RUU entry must be complete */
       ruu_temp = ruu_head -> next;
-      if (RUU_ptr->ea_comp)
-        lsq_temp = lsq_temp -> next;
+      if (ruu_head->ea_comp)
+        lsq_temp = lsq_head -> next;
       commit_stop[tid] = 1;
       n_commit_stop++;
       continue;
@@ -2335,29 +2310,28 @@ ruu_commit(void)
     events = 0;
 
     /* load/stores must retire load/store queue entry as well */
-    if (RUU_ptr->ea_comp) {
-      LSQ_ptr = lsq_head->node;
+    if (ruu_head->ea_comp) {
       /* load/store, retire head of LSQ as well */
-      if (LSQ_num <= 0 || !LSQ_ptr->in_LSQ)
+      if (LSQ_num <= 0 || !lsq_head->in_LSQ)
         panic("RUU out of sync with LSQ");
 
       /* load/store operation must be complete */
-      if (!LSQ_ptr->completed) {
+      if (!lsq_head->completed) {
 	      /* load/store operation is not yet complete */
         ruu_temp = ruu_head -> next;
-        lsq_temp = lsq_temp -> next;
+        lsq_temp = lsq_head -> next;
         commit_stop[tid] = 1;
         continue;
 	    }
 
-      if ((MD_OP_FLAGS(LSQ_ptr->op) & (F_MEM|F_STORE))
+      if ((MD_OP_FLAGS(lsq_head->op) & (F_MEM|F_STORE))
           == (F_MEM|F_STORE)) {
 	      struct res_template *fu;
 
 
 	      /* stores must retire their store value to the cache at commit,
 		    try to get a store port (functional unit allocation) */
-	      fu = res_get(fu_pool, MD_OP_FUCLASS(LSQ_ptr->op));
+	      fu = res_get(fu_pool, MD_OP_FUCLASS(lsq_head->op));
 	      if (fu) {
           /* reserve the functional unit */
           if (fu->master->busy)
@@ -2370,7 +2344,7 @@ ruu_commit(void)
           if (cache_dl1) {
             /* commit store value to D-cache */
             lat =
-              cache_access(cache_dl1, Write, LSQ_ptr->tid, (LSQ_ptr->addr&~3),
+              cache_access(cache_dl1, Write, lsq_head->tid, (lsq_head->addr&~3),
                     NULL, 4, sim_cycle, NULL, NULL);
             if (lat > cache_dl1_lat)
               events |= PEV_CACHEMISS;
@@ -2380,7 +2354,7 @@ ruu_commit(void)
           if (dtlb) {
             /* access the D-TLB */
             lat =
-              cache_access(dtlb, Read, LSQ_ptr->tid, (LSQ_ptr->addr & ~3),
+              cache_access(dtlb, Read, lsq_head->tid, (lsq_head->addr & ~3),
                     NULL, 4, sim_cycle, NULL, NULL);
             if (lat > 1)
               events |= PEV_TLBMISS;
@@ -2388,63 +2362,67 @@ ruu_commit(void)
         }
         else {
           /* no store ports left, cannot continue to commit insts */
-          break;
+          ruu_temp = ruu_head -> next;
+          lsq_temp = lsq_head -> next;
+          commit_stop[tid] = 1;
+          n_commit_stop++;
+          continue;
         }
       }
 
       /* invalidate load/store operation instance */
-      LSQ_ptr->tag++;
-      sim_slip += (sim_cycle - LSQ_ptr->slip);
+      lsq_head->tag++;
+      sim_slip += (sim_cycle - lsq_head->slip);
     
       /* indicate to pipeline trace that this instruction retired */
-      ptrace_newstage(LSQ_ptr->ptrace_seq, PST_COMMIT, events);
-      ptrace_endinst(LSQ_ptr->ptrace_seq);
+      ptrace_newstage(lsq_head->ptrace_seq, PST_COMMIT, events);
+      ptrace_endinst(lsq_head->ptrace_seq);
 
       /* commit head of LSQ as well */
       lsq_temp = lsq_head -> next;
-      LSQ_pop_head(lsq_head);
+      LSQ_delete(lsq_head);
       // LSQ_ptr->tag++;
     }
 
     if (pred
       && bpred_spec_update == spec_CT
-      && (MD_OP_FLAGS(RUU_ptr->op) & F_CTRL)) {
+      && (MD_OP_FLAGS(ruu_head->op) & F_CTRL)) {
       bpred_update(pred,
-        /* branch address */RUU_ptr->PC,
-        /* actual target address */ RUU_ptr->next_PC,
-        /* taken? */RUU_ptr->next_PC != (RUU_ptr->PC + sizeof(md_inst_t)),
-        /* pred taken? */RUU_ptr->pred_PC != (RUU_ptr->PC + sizeof(md_inst_t)),
-        /* correct pred? */RUU_ptr->pred_PC == RUU_ptr->next_PC,
-        /* opcode */RUU_ptr->op,
-        /* dir predictor update pointer */&RUU_ptr->dir_update);
+        /* branch address */ruu_head->PC,
+        /* actual target address */ ruu_head->next_PC,
+        /* taken? */ruu_head->next_PC != (ruu_head->PC + sizeof(md_inst_t)),
+        /* pred taken? */ruu_head->pred_PC != (ruu_head->PC + sizeof(md_inst_t)),
+        /* correct pred? */ruu_head->pred_PC == ruu_head->next_PC,
+        /* opcode */ruu_head->op,
+        /* dir predictor update pointer */&ruu_head->dir_update);
     }
 
     /* invalidate RUU operation instance */
-    RUU_ptr->tag++;
-    sim_slip += (sim_cycle - RUU_ptr->slip);
+    ruu_head->tag++;
+    sim_slip += (sim_cycle - ruu_head->slip);
     /* print retirement trace if in verbose mode */
     if (verbose) {
       sim_ret_insn++;
-      myfprintf(stderr, "%10n @ 0x%08p: ", sim_ret_insn, RUU_ptr->PC);
-      md_print_insn(RUU_ptr->IR, RUU_ptr->PC, stderr);
-      if (MD_OP_FLAGS(RUU_ptr->op) & F_MEM)
-        myfprintf(stderr, "  mem: 0x%08p", RUU_ptr->addr);
+      myfprintf(stderr, "%10n @ 0x%08p: ", sim_ret_insn, ruu_head->PC);
+      md_print_insn(ruu_head->IR, ruu_head->PC, stderr);
+      if (MD_OP_FLAGS(ruu_head->op) & F_MEM)
+        myfprintf(stderr, "  mem: 0x%08p", ruu_head->addr);
       fprintf(stderr, "\n");
       /* fflush(stderr); */
     }
 
     /* indicate to pipeline trace that this instruction retired */
-    ptrace_newstage(RUU_ptr->ptrace_seq, PST_COMMIT, events);
-    ptrace_endinst(RUU_ptr->ptrace_seq);
+    ptrace_newstage(ruu_head->ptrace_seq, PST_COMMIT, events);
+    ptrace_endinst(ruu_head->ptrace_seq);
 
     for (i=0; i<MAX_ODEPS; i++) {
-      if (RUU_ptr->odep_list[i])
+      if (ruu_head->odep_list[i])
         panic ("retired instruction has odeps\n");
     }
       /* commit head entry of RUU */
     ruu_temp = ruu_head -> next;
     RUU_delete(ruu_head);
-    // RUU_ptr->tag++;
+    // ruu_head->tag++;
 
     /* one more instruction committed to architected state */
     committed++;
@@ -2460,10 +2438,10 @@ ruu_commit(void)
 /* recover processor microarchitecture state back to point of the
    mis-predicted branch at RUU[BRANCH_INDEX] */
 static void
-ruu_recover(int tid, struct RUU_queue *mispred)			/* index of mis-pred branch */
+ruu_recover(int tid, struct RUU_station *mispred)			/* index of mis-pred branch */
 {
-  struct RUU_queue *RUU_index, *LSQ_index, *RUU_temp, *LSQ_temp;
-  struct RS_link *eq_node, *req_node;
+  struct RUU_station *RUU_index, *LSQ_index, *RUU_temp, *LSQ_temp;
+  struct RS_link *ev_node, *req_node;
 
   /* recover from the tail of the RUU towards the head until the branch index
      is reached, this direction ensures that the LSQ can be synchronized with
@@ -2475,189 +2453,86 @@ ruu_recover(int tid, struct RUU_queue *mispred)			/* index of mis-pred branch */
 
   /* traverse to older insts until the mispredicted branch is encountered */
   while (RUU_index != mispred) {
-    /* the RUU should not drain since the mispredicted branch will remain */
+      /* the RUU should not drain since the mispredicted branch will remain */
     if (!RUU_num)
-      panic("empty RUU");
+    panic("empty RUU");
 
-    // /* should meet up with the tail first */
-    // if (RUU_index == RUU_head[tid])
-    //   panic("RUU head and tail broken");
+    /* should meet up with the tail first */
+    if (RUU_index == RUU)
+    panic("RUU head and tail broken");
 
-    if (RUU_index->node->tid != tid) {
-      if (RUU_index->node->ea_comp)
+    if (RUU_index->tid != tid) {
+      if (RUU_index->ea_comp)
         LSQ_index = LSQ_index->prev;
       RUU_index = RUU_index->prev;
       continue;
     }
 
-    /* is this operation an effective addr calc for a load or store? */
-    if (RUU_index->node->ea_comp) {
-      /* should be at least one load or store in the LSQ */
+      /* is this operation an effective addr calc for a load or store? */
+    if (RUU_index->ea_comp) {
+	  /* should be at least one load or store in the LSQ */
       if (!LSQ_num)
         panic("RUU and LSQ out of sync");
 
-      /* recover any resources consumed by the load or store operation */
+	  /* recover any resources consumed by the load or store operation */
 
       for (int i=0; i<MAX_ODEPS; i++) {
-          RSLINK_FREE_LIST(LSQ_index->node->odep_list[i]);
+          RSLINK_FREE_LIST(LSQ_index->odep_list[i]);
           /* blow away the consuming op list */
-          LSQ_index->node->odep_list[i] = NULL;
-      }
+          LSQ_index->odep_list[i] = NULL;
+        }
         
-      // /* squash this LSQ entry */
-      // LSQ[tid][LSQ_index].tag++;
+      /* squash this LSQ entry */
+      LSQ_index->tag++;
     
-      /* indicate in pipetrace that this instruction was squashed */
-      ptrace_endinst(LSQ_index->node->ptrace_seq);
-      LSQ_temp = LSQ_index->prev;
-      eq_node = event_queue; req_node = ready_queue;
+	  /* indicate in pipetrace that this instruction was squashed */
+    ptrace_endinst(LSQ_index->ptrace_seq);
+    LSQ_temp = LSQ_index->prev;
+    ev_node = event_queue; req_node = ready_queue;
 
-      // while (eq_node) {
-      //   if (eq_node->rq == LSQ_index)
-      //     eq_node->rq = NULL;
-      //   eq_node = eq_node->next;
-      // }
-      // while (req_node) {
-      //   if (req_node->rq == LSQ_index)
-      //     req_node->rq = NULL;
-      //   req_node = req_node->next;
-      // }
-
-
-            struct RS_link *req_link_iter_lsq = ready_queue;
-      struct RS_link *prev_req_link_lsq = NULL;
-
-      while (req_link_iter_lsq) {
-          if (req_link_iter_lsq->rq == LSQ_index) { // LSQ_index와 비교
-              // 핵심 변경: 다음 노드를 RSLINK_FREE 호출 이전에 저장
-              struct RS_link *temp_next = req_link_iter_lsq->next; 
-
-              RSLINK_FREE(req_link_iter_lsq); // rq=NULL, tag=0, next 오염 발생
-
-              // 연결 리스트에서 노드 제거
-              if (prev_req_link_lsq) {
-                  prev_req_link_lsq->next = temp_next; // 미리 저장해 둔 temp_next 사용
-              } else {
-                  ready_queue = temp_next; // 헤드 업데이트
-              }
-              
-              req_link_iter_lsq = temp_next; // 다음 순회 노드로 이동
-              continue; // 현재 노드를 제거했으므로 prev 업데이트 없이 다음 순회
-          }
-          prev_req_link_lsq = req_link_iter_lsq;
-          req_link_iter_lsq = req_link_iter_lsq->next;
-      }
-
-      // 2. event_queue cleanup for LSQ entry
-      struct RS_link *eq_link_iter_lsq = event_queue;
-      struct RS_link *prev_eq_link_lsq = NULL;
-
-      while (eq_link_iter_lsq) {
-          if (eq_link_iter_lsq->rq == LSQ_index) { // LSQ_index와 비교
-              // 핵심 변경: 다음 노드를 RSLINK_FREE 호출 이전에 저장
-              struct RS_link *temp_next = eq_link_iter_lsq->next; 
-
-              RSLINK_FREE(eq_link_iter_lsq); // rq=NULL, tag=0, next 오염 발생
-
-              // 연결 리스트에서 노드 제거
-              if (prev_eq_link_lsq) {
-                  prev_eq_link_lsq->next = temp_next; // 미리 저장해 둔 temp_next 사용
-              } else {
-                  event_queue = temp_next; // 헤드 업데이트
-              }
-              
-              eq_link_iter_lsq = temp_next; // 다음 순회 노드로 이동
-              continue; // 현재 노드를 제거했으므로 prev 업데이트 없이 다음 순회
-          }
-          prev_eq_link_lsq = eq_link_iter_lsq;
-          eq_link_iter_lsq = eq_link_iter_lsq->next;
-      }
-      /* go to next earlier LSQ slot */
-      LSQ_index->node->tag++;
+    while (ev_node) {
+      if (ev_node->rs == LSQ_index) ev_node->rs = NULL;
+      ev_node = ev_node->next;
+    }
+    while (req_node) {
+      if (req_node->rs == LSQ_index) req_node->rs = NULL;
+      req_node = req_node->next;
+    }
+	  /* go to next earlier LSQ slot */
       LSQ_delete(LSQ_index);
       LSQ_index = LSQ_temp;
-    }
+	}
 
       /* recover any resources used by this RUU operation */
 
     for (int i=0; i<MAX_ODEPS; i++) {
-      RSLINK_FREE_LIST(RUU_index->node->odep_list[i]);
+      RSLINK_FREE_LIST(RUU_index->odep_list[i]);
       /* blow away the consuming op list */
-      RUU_index->node->odep_list[i] = NULL;
+      RUU_index->odep_list[i] = NULL;
     }
-      // /* squash this RUU entry */
-      // RUU[tid][RUU_index].tag++;
-    
-    /* indicate in pipetrace that this instruction was squashed */
-    ptrace_endinst(RUU_index->node->ptrace_seq);
+        
+      /* squash this RUU entry */
+    ptrace_endinst(RUU_index->ptrace_seq);
 
     /* go to next earlier slot in the RUU */
     RUU_temp = RUU_index->prev;
-    // RUU_delete(RUU_index);
-    // eq_node = event_queue; req_node = ready_queue;
-    //   while (eq_node) {
-    //     if (eq_node->rq == RUU_index)
-    //       eq_node->rq = NULL;
-    //     eq_node = eq_node->next;
-    //   }
-    //   while (req_node) {
-    //     if (req_node->rq == RUU_index)
-    //       req_node->rq = NULL;
-    //     req_node = req_node->next;
-    //   }
-    struct RS_link *req_link_iter_ruu = ready_queue;
-    struct RS_link *prev_req_link_ruu = NULL;
 
-    while (req_link_iter_ruu) {
-        if (req_link_iter_ruu->rq == RUU_index) { // RUU_index와 비교
-            // 핵심 변경: 다음 노드를 RSLINK_FREE 호출 이전에 저장
-            struct RS_link *temp_next = req_link_iter_ruu->next; 
+    ev_node = event_queue; req_node = ready_queue;
 
-            RSLINK_FREE(req_link_iter_ruu); // rq=NULL, tag=0, next 오염 발생
-
-            // 연결 리스트에서 노드 제거
-            if (prev_req_link_ruu) {
-                prev_req_link_ruu->next = temp_next; // 미리 저장해 둔 temp_next 사용
-            } else {
-                ready_queue = temp_next; // 헤드 업데이트
-            }
-            
-            req_link_iter_ruu = temp_next; // 다음 순회 노드로 이동
-            continue; // 현재 노드를 제거했으므로 prev 업데이트 없이 다음 순회
-        }
-        prev_req_link_ruu = req_link_iter_ruu;
-        req_link_iter_ruu = req_link_iter_ruu->next;
+    while (ev_node) {
+      if (ev_node->rs == RUU_index) ev_node->rs = NULL;
+      ev_node = ev_node->next;
     }
-
-    // 2. event_queue cleanup for RUU entry
-    struct RS_link *eq_link_iter_ruu = event_queue;
-    struct RS_link *prev_eq_link_ruu = NULL;
-
-    while (eq_link_iter_ruu) {
-        if (eq_link_iter_ruu->rq == RUU_index) { // RUU_index와 비교
-            // 핵심 변경: 다음 노드를 RSLINK_FREE 호출 이전에 저장
-            struct RS_link *temp_next = eq_link_iter_ruu->next; 
-
-            RSLINK_FREE(eq_link_iter_ruu); // rq=NULL, tag=0, next 오염 발생
-
-            // 연결 리스트에서 노드 제거
-            if (prev_eq_link_ruu) {
-                prev_eq_link_ruu->next = temp_next; // 미리 저장해 둔 temp_next 사용
-            } else {
-                event_queue = temp_next; // 헤드 업데이트
-            }
-            
-            eq_link_iter_ruu = temp_next; // 다음 순회 노드로 이동
-            continue; // 현재 노드를 제거했으므로 prev 업데이트 없이 다음 순회
-        }
-        prev_eq_link_ruu = eq_link_iter_ruu;
-        eq_link_iter_ruu = eq_link_iter_ruu->next;
+    while (req_node) {
+      if (req_node->rs == RUU_index) req_node->rs = NULL;
+      req_node = req_node->next;
     }
-
-    RUU_index->node->tag++;
+      /* go to next earlier slot in the RUU */
+    RUU_index->tag++;
     RUU_delete(RUU_index);
     RUU_index = RUU_temp;
   }
+
 
   /* revert create vector back to last precise create vector state, NOTE:
      this is accomplished by resetting all the copied-on-write bits in the
@@ -2685,11 +2560,11 @@ ruu_writeback(void)
 {
   int i;
   int tid;
-  struct RUU_queue *rq;
+  struct RUU_station *rs;
 
   /* service all completed events */
-  while ((rq = eventq_next_event())) {
-      struct RUU_station *rs = rq->node;
+  while ((rs = eventq_next_event()))
+    {
       /* RS has completed execution and (possibly) produced a result */
       if (!OPERANDS_READY(rs) || rs->queued || !rs->issued || rs->completed)
 	panic("inst completed and !ready, !issued, or completed");
@@ -2705,7 +2580,7 @@ ruu_writeback(void)
 	    panic("mis-predicted load or store?!?!?");
 
 	  /* recover processor state and reinit fetch to correct path */
-	  ruu_recover(tid, rq);
+	  ruu_recover(tid, rs);
 	  tracer_recover(tid);
 	  bpred_recover(pred, rs->PC, rs->stack_recover_idx);
 
@@ -2740,76 +2615,75 @@ ruu_writeback(void)
       /* broadcast results to consuming operations, this is more efficiently
          accomplished by walking the output dependency chains of the
 	 completed instruction */
-  for (i=0; i<MAX_ODEPS; i++) {
-	  if (rs->onames[i] != NA) {
-      struct CV_link link;
-      struct RS_link *olink, *olink_next;
-      int tid = rs->tid;
-      if (rs->spec_mode) {
-        /* update the speculative create vector, future operations
-          get value from later creator or architected reg file */
-        link = spec_create_vector[tid][rs->onames[i]];
-        if (/* !NULL */link.rs
-		        && /* refs RS */(link.rs == rs && link.odep_num == i)) {
-            /* the result can now be read from a physical register,
-          indicate this as so */
-		      spec_create_vector[tid][rs->onames[i]] = CVLINK_NULL;
-		      spec_create_vector_rt[tid][rs->onames[i]] = sim_cycle;
-		    }
-		  /* else, creator invalidated or there is another creator */
-		}
-    else {
-		  /* update the non-speculative create vector, future
-		     operations get value from later creator or architected
-		     reg file */
-		  link = create_vector[tid][rs->onames[i]];
-		  if (/* !NULL */link.rs
-		      && /* refs RS */(link.rs == rs && link.odep_num == i)) {
-		      /* the result can now be read from a physical register,
-          indicate this as so */
-        create_vector[tid][rs->onames[i]] = CVLINK_NULL;
-        create_vector_rt[tid][rs->onames[i]] = sim_cycle;
-      }
-		  /* else, creator invalidated or there is another creator */
-		}
-
-    /* walk output list, queue up ready operations */
-    for (olink=rs->odep_list[i]; olink; olink=olink_next) {
-		  if (RSLINK_VALID(olink)) {
-        struct RUU_station *new_node = olink->rq->node;
-        if (new_node->idep_ready[olink->x.opnum])
-			    panic("output dependence already satisfied");
-
-        /* input is now ready */
-        new_node->idep_ready[olink->x.opnum] = TRUE;
-
-        /* are all the register operands of target ready? */
-        if (OPERANDS_READY(new_node)) {
-          /* yes! enqueue instruction as ready, NOTE: stores
-            complete at dispatch, so no need to enqueue
-            them */
-          if (!new_node->in_LSQ
-              || ((MD_OP_FLAGS(new_node->op)&(F_MEM|F_STORE))
-            == (F_MEM|F_STORE)))
-			    readyq_enqueue(olink->rq);
-			  /* else, ld op, issued when no mem conflict */
+      for (i=0; i<MAX_ODEPS; i++) {
+        if (rs->onames[i] != NA) {
+          struct CV_link link;
+          struct RS_link *olink, *olink_next;
+          int tid = rs->tid;
+          if (rs->spec_mode) {
+              /* update the speculative create vector, future operations
+                get value from later creator or architected reg file */
+              link = spec_create_vector[tid][rs->onames[i]];
+              if (/* !NULL */link.rs
+                  && /* refs RS */(link.rs == rs && link.odep_num == i)) {
+                  /* the result can now be read from a physical register,
+              indicate this as so */
+                spec_create_vector[tid][rs->onames[i]] = CVLINK_NULL;
+                spec_create_vector_rt[tid][rs->onames[i]] = sim_cycle;
+              }
+            /* else, creator invalidated or there is another creator */
+          }
+	      else {
+          /* update the non-speculative create vector, future
+            operations get value from later creator or architected
+            reg file */
+          link = create_vector[tid][rs->onames[i]];
+          if (/* !NULL */link.rs
+              && /* refs RS */(link.rs == rs && link.odep_num == i)) {
+                /* the result can now be read from a physical register,
+            indicate this as so */
+            create_vector[tid][rs->onames[i]] = CVLINK_NULL;
+            create_vector_rt[tid][rs->onames[i]] = sim_cycle;
+          }
+          /* else, creator invalidated or there is another creator */
         }
-      }
 
-		  /* grab link to next element prior to free */
-		  olink_next = olink->next;
+	      /* walk output list, queue up ready operations */
+	      for (olink=rs->odep_list[i]; olink; olink=olink_next) {
+          if (RSLINK_VALID(olink)) {
+            if (olink->rs->idep_ready[olink->x.opnum])
+              panic("output dependence already satisfied");
 
-		  /* free dependence link element */
-		  RSLINK_FREE(olink);
-		}
-    /* blow away the consuming op list */
-    rs->odep_list[i] = NULL;
+            /* input is now ready */
+            olink->rs->idep_ready[olink->x.opnum] = TRUE;
 
-    } /* if not NA output */
+            /* are all the register operands of target ready? */
+            if (OPERANDS_READY(olink->rs)) {
+              /* yes! enqueue instruction as ready, NOTE: stores
+                complete at dispatch, so no need to enqueue
+                them */
+              if (!olink->rs->in_LSQ
+                  || ((MD_OP_FLAGS(olink->rs->op)&(F_MEM|F_STORE))
+                == (F_MEM|F_STORE)))
+                readyq_enqueue(olink->rs);
+              /* else, ld op, issued when no mem conflict */
+            }
+		      }
 
-	} /* for all outputs */
+          /* grab link to next element prior to free */
+          olink_next = olink->next;
 
-} /* for all writeback events */
+          /* free dependence link element */
+          RSLINK_FREE(olink);
+		    }
+	      /* blow away the consuming op list */
+	      rs->odep_list[i] = NULL;
+
+	    } /* if not NA output */
+
+	  } /* for all outputs */
+
+  } /* for all writeback events */
 
 }
 
@@ -2835,82 +2709,73 @@ lsq_refresh(void)
   /* scan entire queue for ready loads: scan from oldest instruction
      (head) until we reach the tail or an unresolved store, after which no
      other instruction will become ready */
-  for (int tid=0; tid<thread_num; tid++) {n_std_unknowns[tid] = 0; unknown[tid] = 0;}
+  for (int tid=0; tid<thread_num; tid++) {
+    unknown[tid] = 0; n_std_unknowns[tid] = 0;}
 
-  struct RUU_queue *LSQ_qptr = LSQ;
+  struct RUU_station *lsq_ptr = LSQ;
     
-  while (LSQ_qptr)
-    {
-      if (n_unknown == thread_num)
-        break;
-        
-      struct RUU_station *lsq_ptr = LSQ_qptr->node;
-      int tid = lsq_ptr->tid;
-      if (unknown[tid]) {
-        LSQ_qptr = LSQ_qptr->next;
-        continue;
-      }
+  while (lsq_ptr) {
+    if (n_unknown == thread_num)
+      break;
+
+    int tid = lsq_ptr->tid;
+    if (unknown[tid]) {
+      lsq_ptr = lsq_ptr->next;
+      continue;
+    }
 
       /* terminate search for ready loads after first unresolved store,
 	 as no later load could be resolved in its presence */
-      if (/* store? */
-	  (MD_OP_FLAGS(lsq_ptr->op) & (F_MEM|F_STORE)) == (F_MEM|F_STORE))
-	{
-	  if (!STORE_ADDR_READY(lsq_ptr))
-	    {
+    if (/* store? */
+	  (MD_OP_FLAGS(lsq_ptr->op) & (F_MEM|F_STORE)) == (F_MEM|F_STORE)) {
+      if (!STORE_ADDR_READY(lsq_ptr)) {
 	      /* FIXME: a later STD + STD known could hide the STA unknown */
 	      /* sta unknown, blocks all later loads, stop search */
         n_unknown++;
         unknown[tid] = TRUE;
-        LSQ_qptr = LSQ_qptr->next;
+        lsq_ptr = lsq_ptr->next;
         continue;
 	    }
-	  else if (!OPERANDS_READY(lsq_ptr))
-	    {
-	      /* sta known, but std unknown, may block a later store, record
-		 this address for later referral, we use an array here because
-		 for most simulations the number of entries to search will be
-		 very small */
-	      if (n_std_unknowns[tid] == MAX_STD_UNKNOWNS)
-		fatal("STD unknown array overflow, increase MAX_STD_UNKNOWNS");
-	      std_unknowns[tid][n_std_unknowns[tid]++] = lsq_ptr->addr;
+      else if (!OPERANDS_READY(lsq_ptr)) {
+        /* sta known, but std unknown, may block a later store, record
+        this address for later referral, we use an array here because
+        for most simulations the number of entries to search will be
+        very small */
+        if (n_std_unknowns[tid] == MAX_STD_UNKNOWNS)
+          fatal("STD unknown array overflow, increase MAX_STD_UNKNOWNS");
+        std_unknowns[tid][n_std_unknowns[tid]++] = lsq_ptr->addr;
 	    }
-	  else /* STORE_ADDR_READY() && OPERANDS_READY() */
-	    {
+      else /* STORE_ADDR_READY() && OPERANDS_READY() */ {
 	      /* a later STD known hides an earlier STD unknown */
-	      for (i=0; i<n_std_unknowns[tid]; i++)
-		{
-		  if (std_unknowns[tid][i] == /* STA/STD known */lsq_ptr->addr)
-		    std_unknowns[tid][i] = /* bogus addr */0;
-		}
-	    }
+	      for (i=0; i<n_std_unknowns[tid]; i++) {
+          if (std_unknowns[tid][i] == /* STA/STD known */lsq_ptr->addr)
+            std_unknowns[tid][i] = /* bogus addr */0;
+		  } 
+    }
 	}
 
-      if (/* load? */
-	  ((MD_OP_FLAGS(lsq_ptr->op) & (F_MEM|F_LOAD)) == (F_MEM|F_LOAD))
-	  && /* queued? */!lsq_ptr->queued
-	  && /* waiting? */!lsq_ptr->issued
-	  && /* completed? */!lsq_ptr->completed
-	  && /* regs ready? */OPERANDS_READY(lsq_ptr))
-	{
+  if (/* load? */
+    ((MD_OP_FLAGS(lsq_ptr->op) & (F_MEM|F_LOAD)) == (F_MEM|F_LOAD))
+    && /* queued? */!lsq_ptr->queued
+    && /* waiting? */!lsq_ptr->issued
+    && /* completed? */!lsq_ptr->completed
+    && /* regs ready? */OPERANDS_READY(lsq_ptr)) {
 	  /* no STA unknown conflict (because we got to this check), check for
 	     a STD unknown conflict */
-	  for (i=0; i<n_std_unknowns[tid]; i++)
-	    {
-	      /* found a relevant STD unknown? */
-	      if (std_unknowns[tid][i] == lsq_ptr->addr) {
-        n_unknown++; unknown[tid] = TRUE;
-        continue; 
-        }
-	    }
-	  if (i == n_std_unknowns[tid])
-	    {
-	      /* no STA or STD unknown conflicts, put load on ready queue */
-	      readyq_enqueue(LSQ_qptr);
-	    }
-	}
-        LSQ_qptr = LSQ_qptr->next;
+	  for (i=0; i<n_std_unknowns[tid]; i++) {
+      /* found a relevant STD unknown? */
+      if (std_unknowns[tid][i] == lsq_ptr->addr) {
+      n_unknown++; unknown[tid] = TRUE;
+      continue; 
+      }
     }
+	  if (i == n_std_unknowns[tid]) {
+      /* no STA or STD unknown conflicts, put load on ready queue */
+      readyq_enqueue(lsq_ptr);
+    }
+	}
+  lsq_ptr = lsq_ptr->next;
+  }
   
 }
 
@@ -2955,8 +2820,7 @@ ruu_issue(void)
       /* still valid? */
       if (RSLINK_VALID(node))
 	{
-	  struct RUU_queue *rq = RSLINK_RS(node);
-	  struct RUU_station *rs = rq->node;
+	  struct RUU_station *rs = RSLINK_RS(node);
     int tid = rs->tid;
 
 	  /* issue operation, both reg and mem deps have been satisfied */
@@ -3016,34 +2880,12 @@ ruu_issue(void)
 			     first scan LSQ to see if a store forward is
 			     possible, if not, access the data cache */
 			  load_lat = 0;
-			  // i = (rs - LSQ[tid]);
-			  // if (i != LSQ_head[tid])
-			  //   {
-			  //     for (;;)
-				// {
-				//   /* go to next earlier LSQ entry */
-				//   i = (i + (LSQ_size-1)) % LSQ_size;
-
-				//   /* FIXME: not dealing with partials! */
-				//   if ((MD_OP_FLAGS(LSQ[tid][i].op) & F_STORE)
-				//       && (LSQ[tid][i].addr == rs->addr))
-				//     {
-				//       /* hit in the LSQ */
-				//       load_lat = 1;
-				//       break;
-				//     }
-
-				//   /* scan finished? */
-				//   if (i == LSQ_head[tid])
-				//     break;
-				// }
-			  //   }
-        struct RUU_queue *i = rq;
+        struct RUU_station *i = rs;
         if (i != LSQ) {
           while (i -> prev) {
             i = i -> prev;
-            if ((MD_OP_FLAGS(i->node->op) & F_STORE)
-				      && (i->node->addr == rs->addr)) {
+            if ((MD_OP_FLAGS(i->op) & F_STORE)
+				      && (i->addr == rs->addr)) {
                 /* hit in the LSQ */
                 load_lat = 1;
                 break;
@@ -3093,7 +2935,7 @@ ruu_issue(void)
 			    }
 
 			  /* use computed cache access latency */
-			  eventq_queue_event(rq, sim_cycle + load_lat);
+			  eventq_queue_event(rs, sim_cycle + load_lat);
 
 			  /* entered execute stage, indicate in pipe trace */
 			  ptrace_newstage(rs->ptrace_seq, PST_EXECUTE,
@@ -3103,7 +2945,7 @@ ruu_issue(void)
 		      else /* !load && !store */
 			{
 			  /* use deterministic functional unit latency */
-			  eventq_queue_event(rq, sim_cycle + fu->oplat);
+			  eventq_queue_event(rs, sim_cycle + fu->oplat);
 
 			  /* entered execute stage, indicate in pipe trace */
 			  ptrace_newstage(rs->ptrace_seq, PST_EXECUTE, 
@@ -3118,7 +2960,7 @@ ruu_issue(void)
 		      /* insufficient functional unit resources, put operation
 			 back onto the ready list, we'll try to issue it
 			 again next cycle */
-		      readyq_enqueue(rq);
+		      readyq_enqueue(rs);
 		    }
 		}
 	      else /* does not require a functional unit! */
@@ -3128,7 +2970,7 @@ ruu_issue(void)
 		  rs->issued = TRUE;
 
 		  /* schedule a result event */
-		  eventq_queue_event(rq, sim_cycle + 1);
+		  eventq_queue_event(rs, sim_cycle + 1);
 
 		  /* entered execute stage, indicate in pipe trace */
 		  ptrace_newstage(rs->ptrace_seq, PST_EXECUTE,
@@ -3158,14 +3000,14 @@ ruu_issue(void)
       /* still valid? */
       if (RSLINK_VALID(node))
         {
-	  struct RUU_queue *rq = RSLINK_RS(node);
+	  struct RUU_station *rs = RSLINK_RS(node);
 
           /* node is now un-queued */
-          rq->node->queued = FALSE;
+          rs->queued = FALSE;
 
 	  /* not issued, put operation back onto the ready list, we'll try to
 	     issue it again next cycle */
-          readyq_enqueue(rq);
+          readyq_enqueue(rs);
         }
       /* else, RUU entry was squashed */
 
@@ -3278,18 +3120,12 @@ struct fetch_rec {
   struct bpred_update_t dir_update;	/* bpred direction update info */
   int stack_recover_idx;		/* branch predictor RSB index */
   unsigned int ptrace_seq;		/* print trace sequence id */
+  struct fetch_rec *prev, *next;
 };
-// static struct fetch_rec *fetch_data[MAX_THREAD];	/* IFETCH -> DISPATCH inst queue */
-struct fetch_queue {
-  struct fetch_rec node;
-  struct fetch_queue *next;
-  struct fetch_queue *prev;
-};
-
+static struct fetch_rec *fetch_data, *fetch_tail;	/* IFETCH -> DISPATCH inst queue */
 static int fetch_num;			/* num entries in IF -> DIS queue */
-struct fetch_queue *fetch_data, *fetch_tail;	/* head and tail pointers of queue */
 
-void fetch_push_tail(struct fetch_queue *node) {
+void fetch_push_tail(struct fetch_rec *node) {
   node->next = NULL;
   if (fetch_tail) {
     fetch_tail->next = node;
@@ -3305,7 +3141,7 @@ void fetch_push_tail(struct fetch_queue *node) {
 void fetch_pop_head() {
   if (!fetch_data)
     return;
-  struct fetch_queue *flush_fetch = fetch_data;
+  struct fetch_rec *flush_fetch = fetch_data;
   fetch_data = fetch_data->next;
 
   if (fetch_data)
@@ -3318,10 +3154,10 @@ void fetch_pop_head() {
 }
 
 void fetch_flush(int tid) {
-  struct fetch_queue *next_flush, *tail = fetch_tail;
+  struct fetch_rec *next_flush, *tail = fetch_tail;
   while (tail) {
     next_flush = tail->prev;
-    if (tail->node.tid == tid) {
+    if (tail->tid == tid) {
       if (tail->prev)
         tail->prev->next = tail->next;
       else
@@ -3380,7 +3216,7 @@ tracer_recover(int tid)
   /* if pipetracing, indicate squash of instructions in the inst fetch queue */
   // if (ptrace_active)
   //   {
-  //     while (fetch_num != 0)
+  //     while (fetch_num[tid] != 0)
 	// {
 	//   /* squash the next instruction from the IFETCH -> DISPATCH queue */
 	//   ptrace_endinst(fetch_data[tid][fetch_head[tid]].ptrace_seq);
@@ -3391,7 +3227,6 @@ tracer_recover(int tid)
 	// }
   //   }
 
-  /* reset IFETCH state */
   fetch_flush(tid);
   fetch_pred_PC[tid] = fetch_regs_PC[tid] = recover_PC[tid];
 }
@@ -3678,15 +3513,13 @@ simoo_mem_obj(int tid,
 /* link RS onto the output chain number of whichever operation will next
    create the architected register value IDEP_NAME */
 static INLINE void
-ruu_link_idep(struct RUU_queue *rq,		/* rs station to link */
+ruu_link_idep(struct RUU_station *rs,		/* rs station to link */
         int tid,
 	      int idep_num,			/* input dependence number */
 	      int idep_name)			/* input register name */
 {
   struct CV_link head;
   struct RS_link *link;
-
-  struct RUU_station *rs = rq->node;
 
   /* any dependence? */
   if (idep_name == NA)
@@ -3714,7 +3547,7 @@ ruu_link_idep(struct RUU_queue *rq,		/* rs station to link */
   rs->idep_ready[idep_num] = FALSE;
 
   /* link onto creator's output list of dependant operand */
-  RSLINK_NEW(link, rq); link->x.opnum = idep_num;
+  RSLINK_NEW(link, rs); link->x.opnum = idep_num;
   link->next = head.rs->odep_list[head.odep_num];
   head.rs->odep_list[head.odep_num] = link;
 }
@@ -4104,16 +3937,14 @@ static void
 ruu_dispatch(void)
 {
   int i;
-  int n_dispatched = 0;			/* total insts dispatched */
+  int n_dispatched;			/* total insts dispatched */
   md_inst_t inst;			/* actual instruction bits */
   enum md_opcode op;			/* decoded opcode enum */
   int tid;
   int out1, out2, in1, in2, in3;	/* output/input register names */
   md_addr_t target_PC;			/* actual next/target PC address */
   md_addr_t addr;			/* effective address, if load/store */
-  struct RUU_queue *new_ruu;
   struct RUU_station *rs;		/* RUU station being allocated */
-  struct RUU_queue *new_lsq;
   struct RUU_station *lsq;		/* LSQ station for ld/st's */
   struct bpred_update_t *dir_update_ptr;/* branch predictor dir update ptr */
   int stack_recover_idx;		/* bpred retstack recovery index */
@@ -4131,40 +3962,37 @@ ruu_dispatch(void)
   enum md_fault_type fault;
 
   made_check = FALSE;
-  // n_dispatched = 0;
-  // int dispatch_tid = last_dispatch_thread;
+  n_dispatched = 0;
 
   while (/* instruction decode B/W left? */
 	 n_dispatched < (ruu_decode_width * fetch_speed)
 	 /* RUU and LSQ not full? */
 	 //  && RUU_num < RUU_size && LSQ_num < LSQ_size
 	 /* insts still available from fetch unit? */
-	 && fetch_num != 0 )
-	 /* on an acceptable trace path */
-	 //  && (ruu_include_spec || !spec_mode[dispatch_tid]))
+	 && fetch_num != 0)
+	//  /* on an acceptable trace path */
+	//  && (ruu_include_spec || !spec_mode[dispatch_tid]))
     {
       if (RUU_num >= RUU_size || LSQ_num >=LSQ_size || !fetch_num) {
         break;
       }
       /* if issuing in-order, block until last op issues if inorder issue */
-      if (ruu_inorder_issue && (last_op.rq->node && RSLINK_VALID(&last_op)
-	      && !OPERANDS_READY(last_op.rq->node))) {
+      if (ruu_inorder_issue && (last_op.rs && RSLINK_VALID(&last_op)
+	      && !OPERANDS_READY(last_op.rs))) {
         /* stall until last operation is ready to issue */
         break;
       }
-
-      struct fetch_rec *fetch_data_ptr = &fetch_data->node;
+      struct fetch_rec *fetch_data_ptr = fetch_data;
 
       /* get the next instruction from the IFETCH -> DISPATCH queue */
       inst = fetch_data_ptr->IR;
       tid = fetch_data_ptr->tid;
+      if (!ruu_include_spec && spec_mode[tid]) break;
       regs[tid].regs_PC = fetch_data_ptr->regs_PC;
       pred_PC[tid] = fetch_data_ptr->pred_PC;
       dir_update_ptr = &(fetch_data_ptr->dir_update);
       stack_recover_idx = fetch_data_ptr->stack_recover_idx;
       pseq = fetch_data_ptr->ptrace_seq;
-
-      if (!ruu_include_spec && spec_mode[tid]) break;
 
       /* decode the inst */
       MD_SET_OPCODE(op, inst);
@@ -4273,7 +4101,7 @@ ruu_dispatch(void)
 	    {
 	      sim_total_loads++;
 	      if (!spec_mode[tid])
-        sim_num_loads++;
+		sim_num_loads++;
 	    }
 	}
 
@@ -4297,8 +4125,8 @@ ruu_dispatch(void)
 	  if (pred_perfect)
 	    pred_PC[tid] = regs[tid].regs_NPC;
 
-    total_icount[tid] = 1;
 	  fetch_flush(tid);
+    total_icount[tid] = 1;
 
 	  if (!pred_perfect)
 	    ruu_fetch_issue_delay[tid] = ruu_branch_penalty;
@@ -4325,11 +4153,7 @@ ruu_dispatch(void)
 	   */
 
 	  /* fill in RUU reservation station */
-    
-    new_ruu = calloc(1, sizeof(struct RUU_queue));
-    rs = calloc(1, sizeof(struct RUU_station));
-    new_ruu->node = rs;
-    rs->slip = sim_cycle - 1;
+	  rs = ruu_alloc();
 	  rs->IR = inst;
 	  rs->op = op;
 	  rs->tid = tid;
@@ -4354,10 +4178,8 @@ ruu_dispatch(void)
 	      rs->op = MD_AGEN_OP;
 	      rs->ea_comp = TRUE;
 
-        new_lsq = calloc(1, sizeof(struct RUU_queue));
-        lsq = calloc(1, sizeof(struct RUU_station));
-        new_lsq->node = lsq;
 	      /* fill in LSQ reservation station */
+	      lsq = ruu_alloc();
 	      lsq->IR = inst;
 	      lsq->op = op;
 	      lsq->tid = tid;
@@ -4381,22 +4203,22 @@ ruu_dispatch(void)
 	      ptrace_newstage(lsq->ptrace_seq, PST_DISPATCH, 0);
 
 	      /* link eff addr computation onto operand's output chains */
-	      ruu_link_idep(new_ruu, tid, /* idep_ready[] index */0, NA);
-	      ruu_link_idep(new_ruu, tid, /* idep_ready[] index */1, in2);
-	      ruu_link_idep(new_ruu, tid, /* idep_ready[] index */2, in3);
+	      ruu_link_idep(rs, tid, /* idep_ready[] index */0, NA);
+	      ruu_link_idep(rs, tid, /* idep_ready[] index */1, in2);
+	      ruu_link_idep(rs, tid, /* idep_ready[] index */2, in3);
 
 	      /* install output after inputs to prevent self reference */
 	      ruu_install_odep(rs, tid,/* odep_list[] index */0, DTMP);
 	      ruu_install_odep(rs, tid,/* odep_list[] index */1, NA);
 
 	      /* link memory access onto output chain of eff addr operation */
-	      ruu_link_idep(new_lsq, tid,
+	      ruu_link_idep(lsq, tid,
 			    /* idep_ready[] index */STORE_OP_INDEX/* 0 */,
 			    in1);
-	      ruu_link_idep(new_lsq, tid,
+	      ruu_link_idep(lsq, tid,
 			    /* idep_ready[] index */STORE_ADDR_INDEX/* 1 */,
 			    DTMP);
-	      ruu_link_idep(new_lsq, tid, /* idep_ready[] index */2, NA);
+	      ruu_link_idep(lsq, tid, /* idep_ready[] index */2, NA);
 
 	      /* install output after inputs to prevent self reference */
 	      ruu_install_odep(lsq, tid, /* odep_list[] index */0, out1);
@@ -4404,33 +4226,30 @@ ruu_dispatch(void)
 
 	      /* install operation in the RUU and LSQ */
 	      n_dispatched++;
-        RUU_push_tail(new_ruu);
-        LSQ_push_tail(new_lsq);
+        RUU_push_tail(rs);
+        LSQ_push_tail(lsq);
         total_icount[tid]--;
 
-	      if (OPERANDS_READY(rs))
-		{
-		  /* eff addr computation ready, queue it on ready list */
-		  readyq_enqueue(new_ruu);
-		}
-	      /* issue may continue when the load/store is issued */
-	      RSLINK_INIT(last_op, new_lsq);
+      if (OPERANDS_READY(rs)) {
+        /* eff addr computation ready, queue it on ready list */
+        readyq_enqueue(rs);
+		  }
+      /* issue may continue when the load/store is issued */
+      RSLINK_INIT(last_op, lsq);
 
 	      /* issue stores only, loads are issued by lsq_refresh() */
-	      if (((MD_OP_FLAGS(op) & (F_MEM|F_STORE)) == (F_MEM|F_STORE))
-		  && OPERANDS_READY(lsq))
-		{
-		  /* panic("store immediately ready"); */
-		  /* put operation on ready list, ruu_issue() issue it later */
-		  readyq_enqueue(new_lsq);
-		}
+      if (((MD_OP_FLAGS(op) & (F_MEM|F_STORE)) == (F_MEM|F_STORE)) && OPERANDS_READY(lsq)) {
+        /* panic("store immediately ready"); */
+        /* put operation on ready list, ruu_issue() issue it later */
+        readyq_enqueue(lsq);
+      }
 	    }
 	  else /* !(MD_OP_FLAGS(op) & F_MEM) */
 	    {
 	      /* link onto producing operation */
-	      ruu_link_idep(new_ruu, tid, /* idep_ready[] index */0, in1);
-	      ruu_link_idep(new_ruu, tid, /* idep_ready[] index */1, in2);
-	      ruu_link_idep(new_ruu, tid, /* idep_ready[] index */2, in3);
+	      ruu_link_idep(rs, tid, /* idep_ready[] index */0, in1);
+	      ruu_link_idep(rs, tid, /* idep_ready[] index */1, in2);
+	      ruu_link_idep(rs, tid, /* idep_ready[] index */2, in3);
 
 	      /* install output after inputs to prevent self reference */
 	      ruu_install_odep(rs, tid, /* odep_list[] index */0, out1);
@@ -4438,21 +4257,21 @@ ruu_dispatch(void)
 
 	      /* install operation in the RUU */
 	      n_dispatched++;
-        RUU_push_tail(new_ruu);
+        RUU_push_tail(rs);
         total_icount[tid]--;
 
 	      /* issue op if all its reg operands are ready (no mem input) */
 	      if (OPERANDS_READY(rs))
 		{
 		  /* put operation on ready list, ruu_issue() issue it later */
-		  readyq_enqueue(new_ruu);
+		  readyq_enqueue(rs);
 		  /* issue may continue */
 		  last_op = RSLINK_NULL;
 		}
 	      else
 		{
 		  /* could not issue this inst, stall issue until we can */
-		  RSLINK_INIT(last_op, new_ruu);
+		  RSLINK_INIT(last_op, rs);
 		}
 	    }
 	}
@@ -4566,13 +4385,9 @@ ruu_dispatch(void)
 static void
 fetch_init(void)
 {
-  /* allocate the IFETCH -> DISPATCH instruction queue */
-
-  fetch_data = NULL;
-
   fetch_num = 0;
-
-  fetch_tail = NULL;
+  fetch_data = fetch_tail = NULL;
+  
   IFQ_count = 0;
   IFQ_fcount = 0;
 }
@@ -4581,39 +4396,35 @@ fetch_init(void)
 void
 fetch_dump(int tid, FILE *stream)			/* output stream */
 {
-  // int num, head;
+  int head = 0;
 
   if (!stream)
     stream = stderr;
 
-  fprintf(stream, "** fetch stage state **\n");
+  if (!tid) {
+    fprintf(stream, "** fetch queue contents **\n");
+    fprintf(stream, "fetch_num: %d\n", fetch_num);
+    fprintf(stream, "fetch_head: %p, fetch_tail: %p\n", fetch_data, fetch_tail);
+    struct fetch_rec *fetch_head = fetch_data;
+    while (fetch_head) {
+      fprintf(stream, "idx: %2d: inst: `", head);
+      md_print_insn(fetch_head->IR, fetch_head->regs_PC, stream);
+      fprintf(stream, "'\n");
+      myfprintf(stream, "regs_PC: 0x%08p, pred_PC: 0x%08p\n",
+      fetch_head->regs_PC, fetch_head->pred_PC);
+      head++;
+    }
+  }
+
+  fprintf(stream, "** fetch stage state %d **\n", tid);
 
   fprintf(stream, "spec_mode: %s\n", spec_mode[fetch_thread] ? "t" : "f");
   myfprintf(stream, "pred_PC: 0x%08p, recover_PC[tid]: 0x%08p\n",
 	    pred_PC[tid], recover_PC[tid]);
   myfprintf(stream, "fetch_regs_PC: 0x%08p, fetch_pred_PC: 0x%08p\n",
-	    fetch_regs_PC[tid], fetch_pred_PC[tid]);
+	    fetch_regs_PC, fetch_pred_PC);
   fprintf(stream, "\n");
 
-  if (!tid) {
-    fprintf(stream, "** fetch queue contents **\n");
-    fprintf(stream, "fetch_num: %d\n", fetch_num);
-    // fprintf(stream, "fetch_head: %d, fetch_tail: %d\n",
-    //   fetch_data, fetch_tail);
-
-    // num = fetch_num;
-    // while (num)
-    //   {
-    //     fprintf(stream, "idx: %2d: inst: `", head);
-    //     md_print_insn(fetch_data[tid][head].IR, fetch_data[tid][head].regs_PC, stream);
-    //     fprintf(stream, "'\n");
-    //     myfprintf(stream, "         regs_PC: 0x%08p, pred_PC: 0x%08p\n",
-    //   fetch_data[tid][head].regs_PC, fetch_data[tid][head].pred_PC);
-    //     head = (head + 1) & (ruu_ifq_size - 1);
-    //     num--;
-    //   }
-
-  }
 }
 
 static int last_inst_missed = FALSE;
@@ -4652,7 +4463,6 @@ ruu_fetch(void)
        && !done;
        i++)
     {
-      // int ruu_fetch_tail = fetch_tail[fetch_thread];
       /* fetch an instruction at the next predicted fetch address */
       fetch_regs_PC[fetch_thread] = fetch_pred_PC[fetch_thread];
 
@@ -4709,8 +4519,7 @@ ruu_fetch(void)
 
       /* have a valid inst, here */
 
-    struct fetch_queue *new_node = calloc(1, sizeof(struct fetch_queue));
-	  struct fetch_rec *fetch_data_ptr = &new_node->node;
+	  struct fetch_rec *fetch_data_ptr = calloc(1, sizeof(struct fetch_rec));
       /* possibly use the BTB target */
       if (pred)
 	{
@@ -4764,18 +4573,18 @@ ruu_fetch(void)
       fetch_data_ptr->ptrace_seq = ptrace_seq++;
 
       /* for pipe trace */
-      // ptrace_newinst(fetch_data_ptr[ruu_fetch_tail].ptrace_seq,
-		  //    inst, fetch_data_ptr[ruu_fetch_tail].regs_PC,
-		  //    0);
-      // ptrace_newstage(fetch_data_ptr[ruu_fetch_tail].ptrace_seq,
-		  //     PST_IFETCH,
-		  //     ((last_inst_missed ? PEV_CACHEMISS : 0)
-		  //      | (last_inst_tmissed ? PEV_TLBMISS : 0)));
+      ptrace_newinst(fetch_data_ptr->ptrace_seq,
+		     inst, fetch_data_ptr->regs_PC,
+		     0);
+      ptrace_newstage(fetch_data_ptr->ptrace_seq,
+		      PST_IFETCH,
+		      ((last_inst_missed ? PEV_CACHEMISS : 0)
+		       | (last_inst_tmissed ? PEV_TLBMISS : 0)));
       last_inst_missed = FALSE;
       last_inst_tmissed = FALSE;
 
       /* adjust instruction fetch queue */
-      fetch_push_tail(new_node);
+      fetch_push_tail(fetch_data_ptr);
       total_icount[fetch_thread]++;
     }
 }
@@ -4989,14 +4798,9 @@ sim_main(void)
   for (;;)
     {
       /* RUU/LSQ sanity checks */
-      for (int tid = 0; tid < thread_num; tid++) {
+
         if (RUU_num < LSQ_num)
           panic("RUU_num < LSQ_num");
-        // if (((RUU_head + RUU_num) % RUU_size) != RUU_tail)
-        //   panic("RUU_head/RUU_tail wedged");
-        // if (((LSQ_head + LSQ_num) % LSQ_size) != LSQ_tail)
-        //   panic("LSQ_head/LSQ_tail wedged");
-      }
 
       /* check if pipetracing is still active */
       ptrace_check_active(fetch_regs_PC[fetch_thread], sim_num_insn, sim_cycle);
@@ -5055,13 +4859,13 @@ sim_main(void)
         if (ruu_fetch_issue_delay[tid])
           ruu_fetch_issue_delay[tid]--;
 
+      /* update buffer occupancy stats */
       IFQ_count += fetch_num;
       IFQ_fcount += ((fetch_num == ruu_ifq_size) ? 1 : 0);
       RUU_count += RUU_num;
       RUU_fcount += ((RUU_num == RUU_size) ? 1 : 0);
       LSQ_count += LSQ_num;
       LSQ_fcount += ((LSQ_num == LSQ_size) ? 1 : 0);
-      
 
       /* go to next cycle */
       sim_cycle++;
@@ -5069,20 +4873,13 @@ sim_main(void)
 
       /* finish early? */
       if (max_insts && sim_num_insn >= max_insts) {
-        // for (int tid = 0; tid < thread_num; tid++) {
-        //   fprintf(stdout, "[Thread %d Output]:\n", tid);
-        //   fwrite(output_buffer[tid], 1, output_buf_pos[tid], stdout);
-        // }
-        return;}
+        return;
+      }
       int progend = 0;
       for (int tid = 0; tid < thread_num; tid++) {
         if (thread_end[tid]) progend++;
       }
       if (progend == thread_num) {
-        // for (int tid = 0; tid < thread_num; tid++) {
-        //   fprintf(stdout, "[Thread %d Output]:\n", tid);
-        //   fwrite(output_buffer[tid], 1, output_buf_pos[tid], stdout);
-        // }
         longjmp(sim_exit_buf, 1);
       }
     }
