@@ -1,0 +1,77 @@
+./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in
+sim: ** simulation statistics **
+sim_num_insn                1000003 # total number of instructions committed
+sim_num_refs                 335561 # total number of loads and stores committed
+sim_num_loads                214225 # total number of loads committed
+sim_num_stores          121336.0000 # total number of stores committed
+sim_num_branches             167280 # total number of branches committed
+sim_elapsed_time                  1 # total simulation time in seconds
+sim_inst_rate          1000003.0000 # simulation speed (in insts/sec)
+sim_total_insn              1037925 # total number of instructions executed
+sim_total_refs               349155 # total number of loads and stores executed
+sim_total_loads              225158 # total number of loads executed
+sim_total_stores        123997.0000 # total number of stores executed
+sim_total_branches           173321 # total number of branches executed
+sim_thread_insn 0           1000003 # total simulation time in cycles
+sim_cycle                    611564 # total simulation time in cycles
+sim_IPC                      1.6352 # instructions per cycle
+sim_CPI                      0.6116 # cycles per instruction
+
+./spec_alpha/gcc/gcc.alpha ./spec_alpha/gcc/gcc_input/166.i -o ./spec_alpha/gcc/gcc_input/166.s
+sim: ** simulation statistics **
+sim_num_insn                1000000 # total number of instructions committed
+sim_num_refs                 362171 # total number of loads and stores committed
+sim_num_loads                236777 # total number of loads committed
+sim_num_stores          125394.0000 # total number of stores committed
+sim_num_branches             156069 # total number of branches committed
+sim_elapsed_time                  1 # total simulation time in seconds
+sim_inst_rate          1000000.0000 # simulation speed (in insts/sec)
+sim_total_insn              1042866 # total number of instructions executed
+sim_total_refs               376394 # total number of loads and stores executed
+sim_total_loads              245318 # total number of loads executed
+sim_total_stores        131076.0000 # total number of stores executed
+sim_total_branches           163090 # total number of branches executed
+sim_thread_insn 0           1000000 # total simulation time in cycles
+sim_cycle                    731314 # total simulation time in cycles
+sim_IPC                      1.3674 # instructions per cycle
+sim_CPI                      0.7313 # cycles per instruction
+
+./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30
+sim: ** simulation statistics **
+sim_num_insn                1000000 # total number of instructions committed
+sim_num_refs                 400000 # total number of loads and stores committed
+sim_num_loads                200000 # total number of loads committed
+sim_num_stores          200000.0000 # total number of stores committed
+sim_num_branches              25000 # total number of branches committed
+sim_elapsed_time                  1 # total simulation time in seconds
+sim_inst_rate          1000000.0000 # simulation speed (in insts/sec)
+sim_total_insn              1000000 # total number of instructions executed
+sim_total_refs               400000 # total number of loads and stores executed
+sim_total_loads              200000 # total number of loads executed
+sim_total_stores        200000.0000 # total number of stores executed
+sim_total_branches            25000 # total number of branches executed
+sim_thread_insn 0           1000000 # total simulation time in cycles
+sim_cycle                    350106 # total simulation time in cycles
+sim_IPC                      2.8563 # instructions per cycle
+sim_CPI                      0.3501 # cycles per instruction
+
+./spec_alpha/gromacs/gromacs_base.alpha -silent -deffnm ./spec_alpha/gromacs/gromacs_input/gromacs.tpr
+sim: ** simulation statistics **
+sim_num_insn                1000001 # total number of instructions committed
+sim_num_refs                 335928 # total number of loads and stores committed
+sim_num_loads                214258 # total number of loads committed
+sim_num_stores          121670.0000 # total number of stores committed
+sim_num_branches             125037 # total number of branches committed
+sim_elapsed_time                  1 # total simulation time in seconds
+sim_inst_rate          1000001.0000 # simulation speed (in insts/sec)
+sim_total_insn              1023140 # total number of instructions executed
+sim_total_refs               345002 # total number of loads and stores executed
+sim_total_loads              222998 # total number of loads executed
+sim_total_stores        122004.0000 # total number of stores executed
+sim_total_branches           127156 # total number of branches executed
+sim_thread_insn 0           1000001 # total simulation time in cycles
+sim_cycle                    430403 # total simulation time in cycles
+sim_IPC                      2.3234 # instructions per cycle
+sim_CPI                      0.4304 # cycles per instruction
+
+

@@ -72,49 +72,49 @@
 /* amount of tail padding added to all loaded text segments */
 #define TEXT_TAIL_PADDING 0 /* was: 128 */
 
-AlphaSystemState _system[MAX_THREAD];
+AlphaSystemState _system[MAX_THREAD] = {};
 
 /* program text (code) segment base */
-md_addr_t ld_text_base[MAX_THREAD];
+md_addr_t ld_text_base[MAX_THREAD] = {};
 
 /* program text size in bytes */
-unsigned int ld_text_size[MAX_THREAD];
+unsigned int ld_text_size[MAX_THREAD] = {};
 
 /* program bss segment base */
-md_addr_t ld_bss_base[MAX_THREAD];
+md_addr_t ld_bss_base[MAX_THREAD] = {};
 
 /* program bss size in bytes */
-unsigned int ld_bss_size[MAX_THREAD];
+unsigned int ld_bss_size[MAX_THREAD] = {};
 
 
 /* program initialized data segment base */
-md_addr_t ld_data_base[MAX_THREAD];
+md_addr_t ld_data_base[MAX_THREAD] = {};
 
 /* top of the data segment */
-md_addr_t ld_brk_point[MAX_THREAD];
+md_addr_t ld_brk_point[MAX_THREAD] = {};
 
 uint64_t addr, zero=0;
 
 /* program initialized ".data" and uninitialized ".bss" size in bytes */
-unsigned int ld_data_size[MAX_THREAD];
+unsigned int ld_data_size[MAX_THREAD] = {};
 
 /* program stack segment base (highest address in stack) */
-md_addr_t ld_stack_base[MAX_THREAD];
+md_addr_t ld_stack_base[MAX_THREAD] = {};
 
 /* program initial stack size */
-unsigned int ld_stack_size[MAX_THREAD];
+unsigned int ld_stack_size[MAX_THREAD] = {};
 
 /* lowest address accessed on the stack */
-md_addr_t ld_stack_min[MAX_THREAD];
+md_addr_t ld_stack_min[MAX_THREAD] = {};
 
 /* program file name */
-char *ld_prog_fname[MAX_THREAD];
+char *ld_prog_fname[MAX_THREAD] = {};
 
 /* program entry point (initial PC) */
-md_addr_t ld_prog_entry[MAX_THREAD];
+md_addr_t ld_prog_entry[MAX_THREAD] = {};
 
 /* program environment base address address */
-md_addr_t ld_environ_base[MAX_THREAD];
+md_addr_t ld_environ_base[MAX_THREAD] = {};
 
 /* target executable endian-ness, non-zero if big endian */
 int ld_target_big_endian;

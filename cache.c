@@ -536,7 +536,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
     {
       /* hit in the same block */
       blk = cp->last_blk;
-      if (blk->tid == tid)
+      if (blk && blk->tid == tid)
       goto cache_fast_hit;
     }
     

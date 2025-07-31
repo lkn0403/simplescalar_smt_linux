@@ -1592,21 +1592,24 @@ void ruu_pool_init() {
     }
 }
 
-struct RUU_station *ruu_alloc() {
-    if (!ruu_free_list)
-        panic("RUU pool exhausted!");
+/* get a new RS link record */
+#define RUU_NEW(DST)						\
+  { struct RUU_station *n_link;						\
+    if (!ruu_free_list)						\
+      panic("out of ruu");						\
+    n_link = ruu_free_list;						\
+    ruu_free_list = ruu_free_list->next;				\
+    memset(n_link, 0, sizeof(struct RUU_station));  \
+    (DST) = n_link;							\
+  }
 
-    struct RUU_station *rs = ruu_free_list;
-    ruu_free_list = rs->next;
-    memset(rs, 0, sizeof(struct RUU_station));
-    return rs;
-}
-
-void ruu_free(struct RUU_station *rs) {
-    memset(rs, 0, sizeof(struct RUU_station));
-    rs->next = ruu_free_list;
-    ruu_free_list = rs;
-}
+/* free an RS link record */
+#define RUU_FREE(LINK)						\
+  {  struct RUU_station *f_link = (LINK);					\
+     memset(f_link, 0, sizeof(struct RUU_station));  \
+     f_link->next = ruu_free_list;					\
+     ruu_free_list = f_link;						\
+  }
 
 /* non-zero if all register operands are ready, update with MAX_IDEPS */
 #define OPERANDS_READY(RS)                                              \
@@ -1641,7 +1644,7 @@ void RUU_pop_head() {
     RUU->prev = NULL;
   else
     RUU_tail = NULL;
-  ruu_free(flush_ruu);
+  RUU_FREE(flush_ruu);
   RUU_num--;
 }
 
@@ -1655,7 +1658,7 @@ void RUU_delete(struct RUU_station *delq) {
     delq->next->prev = delq->prev;
   else
     RUU_tail = delq->prev;
-  ruu_free(delq);
+  RUU_FREE(delq);
   RUU_num--;
 }
 
@@ -1778,7 +1781,7 @@ void LSQ_pop_head() {
     LSQ->prev = NULL;
   else
     LSQ_tail = NULL;
-  ruu_free(flush_ruu);
+  RUU_FREE(flush_ruu);
   LSQ_num--;
 }
 
@@ -1793,7 +1796,7 @@ void LSQ_delete(struct RUU_station *delq) {
   else
     LSQ_tail = delq->prev;
 
-  ruu_free(delq);
+  RUU_FREE(delq);
   LSQ_num--;
 }
 
@@ -1876,7 +1879,7 @@ static struct RS_link RSLINK_NULL = RSLINK_NULL_DATA;
 #define RSLINK_IS_NULL(LINK)            ((LINK)->rs == NULL)
 
 /* non-zero if RS link is to a valid (non-squashed) entry */
-#define RSLINK_VALID(LINK)              ((LINK)->rs && (LINK)->tag == (LINK)->rs->tag)
+#define RSLINK_VALID(LINK)              ((LINK) && (LINK)->rs && (LINK)->tag == (LINK)->rs->tag)
 
 /* extra RUU reservation station pointer */
 #define RSLINK_RS(LINK)                 ((LINK)->rs)
@@ -2650,8 +2653,14 @@ ruu_writeback(void)
 	      /* walk output list, queue up ready operations */
 	      for (olink=rs->odep_list[i]; olink; olink=olink_next) {
           if (RSLINK_VALID(olink)) {
-            if (olink->rs->idep_ready[olink->x.opnum])
-              panic("output dependence already satisfied");
+            if (olink->rs->idep_ready[olink->x.opnum]) {
+                olink_next = olink->next;
+
+              /* free dependence link element */
+              RSLINK_FREE(olink);
+              continue;
+		      }
+              // panic("output dependence already satisfied");
 
             /* input is now ready */
             olink->rs->idep_ready[olink->x.opnum] = TRUE;
@@ -2897,8 +2906,11 @@ ruu_issue(void)
 			    {
 			      int valid_addr = MD_VALID_ADDR(rs->tid, rs->addr);
 
-			      if (!spec_mode[tid] && !valid_addr)
-				sim_invalid_addrs++;
+			      if (!spec_mode[tid] && !valid_addr) {
+              sim_invalid_addrs++;
+              // panic("invalid addr\n");
+            }
+
 
 			      /* no! go to the data cache if addr is valid */
 			      if (cache_dl1 && valid_addr)
@@ -3955,7 +3967,7 @@ simoo_reg_obj(int tid,
 
 /* the last operation that ruu_dispatch() attempted to dispatch, for
    implementing in-order issue */
-static struct RS_link last_op = RSLINK_NULL_DATA;
+static struct RS_link last_op[MAX_THREAD];
 int last_dispatch_thread = 0;
 
 /* dispatch instructions from the IFETCH -> DISPATCH queue: instructions are
@@ -4004,18 +4016,18 @@ ruu_dispatch(void)
       if (RUU_num >= RUU_size || LSQ_num >=LSQ_size || !fetch_num) {
         break;
       }
-      /* if issuing in-order, block until last op issues if inorder issue */
-      if (ruu_inorder_issue && (last_op.rs && RSLINK_VALID(&last_op)
-	      && !OPERANDS_READY(last_op.rs))) {
-        /* stall until last operation is ready to issue */
-        break;
-      }
       struct fetch_rec *fetch_data_ptr = fetch_data;
-      (void **) &fetch_data;
+
       /* get the next instruction from the IFETCH -> DISPATCH queue */
       inst = fetch_data_ptr->IR;
       tid = fetch_data_ptr->tid;
       if (!ruu_include_spec && spec_mode[tid]) break;
+      /* if issuing in-order, block until last op issues if inorder issue */
+      if (ruu_inorder_issue && (last_op[tid].rs && RSLINK_VALID(&last_op[tid])
+	      && !OPERANDS_READY(last_op[tid].rs))) {
+        /* stall until last operation is ready to issue */
+        break;
+      }
       regs[tid].regs_PC = fetch_data_ptr->regs_PC;
       pred_PC[tid] = fetch_data_ptr->pred_PC;
       dir_update_ptr = &(fetch_data_ptr->dir_update);
@@ -4154,7 +4166,6 @@ ruu_dispatch(void)
 	    pred_PC[tid] = regs[tid].regs_NPC;
 
 	  fetch_flush(tid);
-    total_icount[tid] = 1;
 
 	  if (!pred_perfect)
 	    ruu_fetch_issue_delay[tid] = ruu_branch_penalty;
@@ -4181,7 +4192,8 @@ ruu_dispatch(void)
 	   */
 
 	  /* fill in RUU reservation station */
-	  rs = ruu_alloc();
+
+	  RUU_NEW(rs);
 	  rs->IR = inst;
 	  rs->op = op;
 	  rs->tid = tid;
@@ -4207,7 +4219,8 @@ ruu_dispatch(void)
 	      rs->ea_comp = TRUE;
 
 	      /* fill in LSQ reservation station */
-	      lsq = ruu_alloc();
+
+        RUU_NEW(lsq);
 	      lsq->IR = inst;
 	      lsq->op = op;
 	      lsq->tid = tid;
@@ -4256,14 +4269,13 @@ ruu_dispatch(void)
 	      n_dispatched++;
         RUU_push_tail(rs);
         LSQ_push_tail(lsq);
-        total_icount[tid]--;
 
       if (OPERANDS_READY(rs)) {
         /* eff addr computation ready, queue it on ready list */
         readyq_enqueue(rs);
 		  }
       /* issue may continue when the load/store is issued */
-      RSLINK_INIT(last_op, lsq);
+      RSLINK_INIT(last_op[tid], lsq);
 
 	      /* issue stores only, loads are issued by lsq_refresh() */
       if (((MD_OP_FLAGS(op) & (F_MEM|F_STORE)) == (F_MEM|F_STORE)) && OPERANDS_READY(lsq)) {
@@ -4286,7 +4298,6 @@ ruu_dispatch(void)
 	      /* install operation in the RUU */
 	      n_dispatched++;
         RUU_push_tail(rs);
-        total_icount[tid]--;
 
 	      /* issue op if all its reg operands are ready (no mem input) */
 	      if (OPERANDS_READY(rs))
@@ -4294,12 +4305,12 @@ ruu_dispatch(void)
 		  /* put operation on ready list, ruu_issue() issue it later */
 		  readyq_enqueue(rs);
 		  /* issue may continue */
-		  last_op = RSLINK_NULL;
+		  last_op[tid] = RSLINK_NULL;
 		}
 	      else
 		{
 		  /* could not issue this inst, stall issue until we can */
-		  RSLINK_INIT(last_op, rs);
+		  RSLINK_INIT(last_op[tid], rs);
 		}
 	    }
 	}
@@ -4307,7 +4318,6 @@ ruu_dispatch(void)
 	{
 	  /* this is a NOP, no need to update RUU/LSQ state */
 	  rs = NULL;
-    total_icount[tid]--;
 	}
 
       /* one more instruction executed, speculative or otherwise */
@@ -4419,6 +4429,8 @@ fetch_init(void)
   
   IFQ_count = 0;
   IFQ_fcount = 0;
+  for (int tid = 0; tid < thread_num; tid++) 
+    memset(&last_op[tid], 0, sizeof(struct RS_link));
 }
 
 /* dump contents of fetch stage registers and fetch queue */
@@ -4462,14 +4474,14 @@ static int last_inst_tmissed = FALSE;
 static void
 fetch_choice(void)
 {
-  // fetch_thread = 0;
-  // unsigned int min_icount = total_icount[0];
-  // for (int tid = 1; tid < thread_num; tid++) {
-  //   if (total_icount[tid] < min_icount) {
-  //     fetch_thread = tid; min_icount = total_icount[tid];
-  //   }
-  // }
-  fetch_thread = (fetch_thread + 1) % thread_num;
+  fetch_thread = 0;
+  unsigned int min_icount = total_icount[0];
+  for (int tid = 1; tid < thread_num; tid++) {
+    if (total_icount[tid] < min_icount) {
+      fetch_thread = tid; min_icount = total_icount[tid];
+    }
+  }
+
 }
 
 /* fetch up as many instruction as one branch prediction and one cache line

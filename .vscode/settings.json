@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "loader.h": "c",
-        "*.def": "c"
+        "*.def": "c",
+        "machine.h": "c"
     }
 }
