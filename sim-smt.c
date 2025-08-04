@@ -4194,6 +4194,7 @@ ruu_dispatch(void)
 	  /* fill in RUU reservation station */
 
 	  RUU_NEW(rs);
+	  rs->slip = sim_cycle - 1;
 	  rs->IR = inst;
 	  rs->op = op;
 	  rs->tid = tid;
@@ -4221,6 +4222,7 @@ ruu_dispatch(void)
 	      /* fill in LSQ reservation station */
 
         RUU_NEW(lsq);
+        lsq->slip = sim_cycle - 1;
 	      lsq->IR = inst;
 	      lsq->op = op;
 	      lsq->tid = tid;
@@ -4489,22 +4491,35 @@ fetch_choice(void)
 static void
 ruu_fetch(void)
 {
-  int i, lat, tlb_lat, done = FALSE;
+  int i, lat, tlb_lat, n_done = 0;
+  int done[MAX_THREAD] = {};
   md_inst_t inst;
   int stack_recover_idx;
   int branch_cnt;
+
+  for (int tid = 0; tid < thread_num; tid++)
+    if (ruu_fetch_issue_delay[tid]) {
+      ruu_fetch_issue_delay[tid]--;
+      done[tid] = 1; n_done++;
+    }
+
 
 
   for (i=0, branch_cnt=0;
        /* fetch up to as many instruction as the DISPATCH stage can decode */
        i < (ruu_decode_width * fetch_speed)
        /* fetch until IFETCH -> DISPATCH queue fills */
-       && fetch_num < ruu_ifq_size
-       && !ruu_fetch_issue_delay[fetch_thread]
+       && fetch_num < ruu_ifq_size ;
+      //  && !ruu_fetch_issue_delay[fetch_thread]
        /* and no IFETCH blocking condition encountered */
-       && !done;
+      //  && !done;
        i++)
     {
+      if (n_done == thread_num) break;
+      if (ruu_fetch_issue_delay[fetch_thread] || done[fetch_thread]) {
+        fetch_thread = (fetch_thread + 1) % thread_num;
+        continue;
+      }
       /* fetch an instruction at the next predicted fetch address */
       fetch_regs_PC[fetch_thread] = fetch_pred_PC[fetch_thread];
 
@@ -4549,7 +4564,9 @@ ruu_fetch(void)
 	    {
 	      /* I-cache miss, block fetch until it is resolved */
 	      ruu_fetch_issue_delay[fetch_thread] += lat - 1;
-	      break;
+        done[fetch_thread] = TRUE;
+        n_done++;
+	      continue;
 	    }
 	  /* else, I-cache/I-TLB hit */
 	}
@@ -4595,8 +4612,10 @@ ruu_fetch(void)
 	    {
 	      /* go with target, NOTE: discontinuous fetch, so terminate */
 	      branch_cnt++;
-	      if (branch_cnt >= fetch_speed)
-		done = TRUE;
+	      if (branch_cnt >= fetch_speed) {
+          done[fetch_thread] = TRUE;
+          n_done++;
+        }
 	    }
 	}
       else
@@ -4897,9 +4916,6 @@ sim_main(void)
       /* call instruction fetch unit if it is not blocked */
       ruu_fetch();
       fetch_choice();
-      for (int tid = 0; tid < thread_num; tid++)
-        if (ruu_fetch_issue_delay[tid])
-          ruu_fetch_issue_delay[tid]--;
 
       /* update buffer occupancy stats */
       IFQ_count += fetch_num;

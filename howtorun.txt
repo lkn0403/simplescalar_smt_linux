@@ -1,0 +1,86 @@
+
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in \
+-- ./spec_alpha/gcc/gcc.alpha ./spec_alpha/gcc/gcc_input/166.i -o ./spec_alpha/gcc/gcc_input/166.s \
+-- ./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30 \
+-- ./spec_alpha/gromacs/gromacs_base.alpha -silent -deffnm ./spec_alpha/gromacs/gromacs_input/gromacs.tpr -nice 0 \
+-- ./spec_alpha/zeusmp/zeusmp_base.alpha ./spec_alpha/zeusmp/zeusmp_input/zmp_inp
+
+./sim-smt -fastfwd 10000000 -max:inst 502946 \
+-- ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in 
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in \
+-- ./spec_alpha/gcc/gcc.alpha ./spec_alpha/gcc/gcc_input/166.i -o ./spec_alpha/gcc/gcc_input/166.s
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in \
+-- ./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in \
+-- ./spec_alpha/gromacs/gromacs_base.alpha -silent -deffnm ./spec_alpha/gromacs/gromacs_input/gromacs.tpr -nice 0 
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in \
+-- ./spec_alpha/zeusmp/zeusmp_base.alpha ./spec_alpha/zeusmp/zeusmp_input/zmp_inp
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/gcc/gcc.alpha ./spec_alpha/gcc/gcc_input/166.i -o ./spec_alpha/gcc/gcc_input/166.s \
+-- ./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30
+
+            gdb -args   ./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/gcc/gcc.alpha ./spec_alpha/gcc/gcc_input/166.i -o ./spec_alpha/gcc/gcc_input/166.s \
+-- ./spec_alpha/gromacs/gromacs_base.alpha -silent -deffnm ./spec_alpha/gromacs/gromacs_input/gromacs.tpr -nice 0 
+ b sim-smt.c:4128
+
+            gdb -args  ./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/gcc/gcc.alpha ./spec_alpha/gcc/gcc_input/166.i -o ./spec_alpha/gcc/gcc_input/166.s \
+-- ./spec_alpha/zeusmp/zeusmp_base.alpha ./spec_alpha/zeusmp/zeusmp_input/zmp_inp
+ b sim-smt.c:4128
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30 \
+-- ./spec_alpha/gromacs/gromacs_base.alpha -silent -deffnm ./spec_alpha/gromacs/gromacs_input/gromacs.tpr -nice 0
+
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30 \
+-- ./spec_alpha/zeusmp/zeusmp_base.alpha ./spec_alpha/zeusmp/zeusmp_input/zmp_inp
+
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/gromacs/gromacs_base.alpha -silent -deffnm ./spec_alpha/gromacs/gromacs_input/gromacs.tpr -nice 0 \
+-- ./spec_alpha/zeusmp/zeusmp_base.alpha ./spec_alpha/zeusmp/zeusmp_input/zmp_inp
+
+
+valgrind -s --leak-check=full --show-leak-kinds=all ./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in \
+-- ./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/zeusmp/zeusmp_base.alpha ./spec_alpha/zeusmp/zeusmp_input/zmp_inp
+
+
+gdb  -args ./sim-smt -fastfwd 10000000 -max:inst 1000000 \
+-- ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in \
+-- ./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30
+
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000  -- ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in
+./sim-outorder -fastfwd 10000000 -max:inst 1000000  ./spec_alpha/mcf/mcf_base.alpha ./spec_alpha/mcf/mcf_input/inp.in
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 -- ./spec_alpha/gcc/gcc.alpha ./spec_alpha/gcc/gcc_input/166.i -o ./spec_alpha/gcc/gcc_input/166.s
+./sim-outorder -fastfwd 10000000 -max:inst 1000000 ./spec_alpha/gcc/gcc.alpha ./spec_alpha/gcc/gcc_input/166.i -o ./spec_alpha/gcc/gcc_input/166.s
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 --  ./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30
+./sim-outorder -fastfwd 10000000 -max:inst 1000000 ./spec_alpha/bzip2/bzip2_base.alpha ./spec_alpha/bzip2/bzip2_input/chicken.jpg 30
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 -- ./spec_alpha/gromacs/gromacs_base.alpha -silent -deffnm ./spec_alpha/gromacs/gromacs_input/gromacs.tpr -nice 0
+./sim-outorder -fastfwd 10000000 -max:inst 1000000 ./spec_alpha/gromacs/gromacs_base.alpha -silent -deffnm ./spec_alpha/gromacs/gromacs_input/gromacs.tpr -nice 0
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 --  ./spec_alpha/zeusmp/zeusmp_base.alpha
+./sim-outorder -fastfwd 10000000 -max:inst 1000000 ./spec_alpha/zeusmp/zeusmp_base.alpha
+
+./sim-smt -fastfwd 10000000 -max:inst 1000000 ./spec_alpha/zeusmp/zeusmp_base.alpha
