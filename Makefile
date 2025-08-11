@@ -78,7 +78,7 @@
 ##	Windows NT version 4.0, Cygnus CygWin/32 beta 19
 ##
 CC = gcc
-OFLAGS = -O0 -g -Wall -fcommon
+OFLAGS = -O3 -g -Wall -fcommon
 MFLAGS = `./sysprobe -flags`
 _MFLAGS = `../sysprobe -flags`
 MLIBS  = `./sysprobe -libs` -lm

@@ -393,6 +393,7 @@ static struct bpred_t *pred;
 
 /* functional unit resource pool */
 static struct res_pool *fu_pool = NULL;
+static counter_t fu_full = 0;
 
 /* text-based stat profiles */
 static struct stat_stat_t *pcstat_stats[MAX_PCSTAT_VARS];
@@ -790,7 +791,7 @@ sim_reg_options(struct opt_odb_t *odb)
 
   opt_reg_string(odb, "-cache:il1",
 		 "l1 inst cache config, i.e., {<config>|dl1|dl2|none}",
-		 &cache_il1_opt, "il1:512:32:1:l",
+		 &cache_il1_opt, "il1:512:32:2:l",
 		 /* print */TRUE, NULL);
 
   opt_reg_note(odb,
@@ -1279,6 +1280,9 @@ sim_reg_stats(int thread_num, struct stat_sdb_t *sdb)   /* stats database */
 		   "instruction per branch",
 		   "sim_num_insn / sim_num_branches", /* format */NULL);
 
+  stat_reg_counter(sdb, "fu_full",
+                   "fu_full",
+                   &fu_full, 0, NULL);
   /* occupancy stats */
   stat_reg_counter(sdb, "IFQ_count", "cumulative IFQ occupancy",
                    &IFQ_count, /* initial value */0, /* format */NULL);
@@ -1382,9 +1386,10 @@ sim_reg_stats(int thread_num, struct stat_sdb_t *sdb)   /* stats database */
 					/* print format */(PF_COUNT|PF_PDF),
 					/* format */"0x%lx %lu %.2f",
 					/* print fn */NULL);
-    }
+    }    
+  mem_reg_stats(mem, sdb);
   for (int tid = 0; tid < thread_num; tid++) {
-    mem_reg_stats(mem[tid], sdb);
+
     ld_reg_stats(tid, sdb);
   }
 }
@@ -1408,8 +1413,9 @@ sim_init_smt(int num)
 
   regs = (struct regs_t *)
     calloc(thread_num, sizeof(struct regs_t));
-  mem = (struct mem_t **)
-    calloc(thread_num, sizeof(struct mem_t *));
+
+  mem = (struct regs_t **)
+    calloc(thread_num, sizeof(struct mem_t));
 
   /* allocate and initialize register file */
   for (int tid = 0; tid < thread_num; tid++) {
@@ -1460,7 +1466,7 @@ sim_load_prog_smt(int tid, char *fname,		/* program to load */
 	      char **envp)		/* program environment */
 {
   /* load program text and data, set up environment, memory, and regs */
-  ld_load_prog(tid, fname, argc, argv, envp, &regs[tid], mem[tid], TRUE);
+  ld_load_prog(tid, fname, argc, argv, envp, &regs[tid], mem, TRUE);
 
   if (!tid) {
     /* initialize here, so symbols can be loaded */
@@ -2364,6 +2370,7 @@ ruu_commit(void)
         }
         else {
           /* no store ports left, cannot continue to commit insts */
+          fu_full++;
           ruu_temp = ruu_head -> next;
           lsq_temp = lsq_head -> next;
           commit_stop[tid] = 1;
@@ -2971,6 +2978,7 @@ ruu_issue(void)
 		      /* insufficient functional unit resources, put operation
 			 back onto the ready list, we'll try to issue it
 			 again next cycle */
+       fu_full++;
 		      readyq_enqueue(rs);
 		    }
 		}
@@ -3808,8 +3816,8 @@ ruu_install_odep(struct RUU_station *rs,	/* creating RUU station */
 #define __READ_SPECMEM(TID, SRC, SRC_V, FAULT)				\
   (addr = (SRC),							\
    (spec_mode[TID]								\
-    ? ((FAULT) = spec_mem_access(TID, mem[TID], Read, addr, &SRC_V, sizeof(SRC_V)))\
-    : ((FAULT) = mem_access(mem[TID], Read, addr, &SRC_V, sizeof(SRC_V)))),	\
+    ? ((FAULT) = spec_mem_access(TID, mem, Read, addr, &SRC_V, sizeof(SRC_V)))\
+    : ((FAULT) = mem_access(mem, Read, addr, &SRC_V, sizeof(SRC_V)))),	\
    SRC_V)
 
 #define READ_BYTE(TID, SRC, FAULT)						\
@@ -3827,8 +3835,8 @@ ruu_install_odep(struct RUU_station *rs,	/* creating RUU station */
 #define __WRITE_SPECMEM(TID, SRC, DST, DST_V, FAULT)				\
   (DST_V = (SRC), addr = (DST),						\
    (spec_mode[TID]								\
-    ? ((FAULT) = spec_mem_access(TID, mem[TID], Write, addr, &DST_V, sizeof(DST_V)))\
-    : ((FAULT) = mem_access(mem[TID], Write, addr, &DST_V, sizeof(DST_V)))))
+    ? ((FAULT) = spec_mem_access(TID, mem, Write, addr, &DST_V, sizeof(DST_V)))\
+    : ((FAULT) = mem_access(mem, Write, addr, &DST_V, sizeof(DST_V)))))
 
 #define WRITE_BYTE(TID, SRC, DST, FAULT)					\
   __WRITE_SPECMEM(TID, (SRC), (DST), temp_byte, (FAULT))
@@ -3845,7 +3853,7 @@ ruu_install_odep(struct RUU_station *rs,	/* creating RUU station */
 #define SYSCALL(TID, INST)							\
   (/* only execute system calls in non-speculative mode */		\
    (spec_mode[TID] ? panic("speculative syscall") : (void) 0),		\
-   sys_syscall(TID, &regs[TID], mem_access, mem[TID], INST, TRUE))
+   sys_syscall(TID, &regs[TID], mem_access, mem, INST, TRUE))
 
 // /* default register state accessor, used by DLite */
 static char *					/* err str, NULL for no err */
@@ -4398,7 +4406,7 @@ ruu_dispatch(void)
       if (dlite_check_break(pred_PC[tid],
 			    is_write ? ACCESS_WRITE : ACCESS_READ,
 			    addr, sim_num_insn, sim_cycle)) {
-	        dlite_main(regs[tid].regs_PC, pred_PC[tid], sim_cycle, &regs[tid], mem[tid]);
+	        dlite_main(regs[tid].regs_PC, pred_PC[tid], sim_cycle, &regs[tid], mem);
 
           }
     }
@@ -4410,7 +4418,7 @@ ruu_dispatch(void)
       if (dlite_check_break(/* no next PC */0,
 			    is_write ? ACCESS_WRITE : ACCESS_READ,
 			    addr, sim_num_insn, sim_cycle)) {
-          dlite_main(regs[tid].regs_PC, /* no next PC */0, sim_cycle, &regs[tid], mem[tid]);
+          dlite_main(regs[tid].regs_PC, /* no next PC */0, sim_cycle, &regs[tid], mem);
 
           }
     }
@@ -4756,7 +4764,7 @@ sim_main(void)
     /* check for DLite debugger entry condition */
     if (dlite_check_break(regs[tid].regs_PC, /* no access */0, /* addr */0, 0, 0)) {
       dlite_main(regs[tid].regs_PC, regs[tid].regs_PC + sizeof(md_inst_t),
-          sim_cycle, &regs[tid], mem[tid]);
+          sim_cycle, &regs[tid], mem);
     }
   }
   /* fast forward simulator loop, performs functional simulation for
@@ -4835,7 +4843,7 @@ sim_main(void)
 	  if (dlite_check_break(regs[fetch_thread].regs_NPC,
 				is_write ? ACCESS_WRITE : ACCESS_READ,
 				addr, sim_num_insn, sim_num_insn)) {
-	    dlite_main(regs[fetch_thread].regs_PC, regs[fetch_thread].regs_NPC, sim_num_insn, &regs[fetch_thread], mem[fetch_thread]);
+	    dlite_main(regs[fetch_thread].regs_PC, regs[fetch_thread].regs_NPC, sim_num_insn, &regs[fetch_thread], mem);
 
         }
 

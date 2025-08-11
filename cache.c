@@ -341,7 +341,8 @@ cache_create(char *name,		/* name of the cache */
 
   /* blow away the last block accessed */
   cp->last_tagset = 0;
-  cp->last_blk = NULL;
+  for (int tid = 0; tid < MAX_THREAD; tid++)
+    cp->last_blk[tid] = NULL;
 
   /* allocate data blocks */
   cp->data = (byte_t *)calloc(nsets * assoc,
@@ -535,7 +536,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
   if (CACHE_TAGSET(cp, addr) == cp->last_tagset)
     {
       /* hit in the same block */
-      blk = cp->last_blk;
+      blk = cp->last_blk[tid];
       if (blk && blk->tid == tid)
       goto cache_fast_hit;
     }
@@ -594,7 +595,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
 
   /* blow away the last block to hit */
   cp->last_tagset = 0;
-  cp->last_blk = NULL;
+  cp->last_blk[tid] = NULL;
 
   /* write back replaced block data */
   if (repl->status & CACHE_BLK_VALID)
@@ -683,7 +684,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
 
   /* record the last block to hit */
   cp->last_tagset = CACHE_TAGSET(cp, addr);
-  cp->last_blk = blk;
+  cp->last_blk[tid] = blk;
 
   /* get user block data, if requested and it exists */
   if (udata)
@@ -717,7 +718,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
 
   /* record the last block to hit */
   cp->last_tagset = CACHE_TAGSET(cp, addr);
-  cp->last_blk = blk;
+  cp->last_blk[tid] = blk;
 
   /* return first cycle data is available to access */
   return (int) MAX(cp->hit_latency, (blk->ready - now));
@@ -777,7 +778,7 @@ cache_flush(struct cache_t *cp,		/* cache instance to flush */
 
   /* blow away the last block to hit */
   cp->last_tagset = 0;
-  cp->last_blk = NULL;
+  cp->last_blk[tid] = NULL;
 
   /* no way list updates required because all blocks are being invalidated */
   for (i=0; i<cp->nsets; i++)
@@ -850,7 +851,7 @@ cache_flush_addr(struct cache_t *cp,	/* cache instance to flush */
 
       /* blow away the last block to hit */
       cp->last_tagset = 0;
-      cp->last_blk = NULL;
+      cp->last_blk[tid] = NULL;
 
       if (blk->status & CACHE_BLK_DIRTY)
 	{

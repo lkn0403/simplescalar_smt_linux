@@ -59,6 +59,7 @@
 #include "machine.h"
 #include "memory.h"
 #include "stats.h"
+#include "sim.h"
 
 /*
  * This module contains code to implement various cache-like structures.  The
@@ -203,7 +204,7 @@ struct cache_t
 
   /* last block to hit, used to optimize cache hit processing */
   md_addr_t last_tagset;	/* tag of last line accessed */
-  struct cache_blk_t *last_blk;	/* cache block last accessed */
+  struct cache_blk_t *last_blk[MAX_THREAD];	/* cache block last accessed */
 
   /* data blocks */
   byte_t *data;			/* pointer to data blocks allocation */
